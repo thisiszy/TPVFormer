@@ -8,7 +8,14 @@ from mmcv.image.io import imread
 class ImagePoint_NuScenes(data.Dataset):
     def __init__(self, data_path, imageset='train', label_mapping="nuscenes.yaml", nusc=None):
         with open(imageset, 'rb') as f:
-            data = pickle.load(f)
+            data_raw = pickle.load(f)
+
+        data = {}
+        data["metadata"] = data_raw["metadata"]
+        data["infos"] = []
+        for info in data_raw["infos"]:
+            if os.path.exists(info["lidar_path"]):
+                data["infos"].append(info)
 
         with open(label_mapping, 'r') as stream:
             nuscenesyaml = yaml.safe_load(stream)
