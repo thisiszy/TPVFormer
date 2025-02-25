@@ -1,9 +1,9 @@
 ## Installation
 Install the following packages.
 ```
-pyvirtualdisplay==3.0
-mayavi==4.8.1
-PyQt5==5.15.7
+pip install https://github.com/enthought/mayavi/zipball/master
+pip install pyvirtualdisplay==3.0
+pip install PyQt5==5.15.7
 ```
 
 ## How to visualize a keyframe in nuScenes dataset?
