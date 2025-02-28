@@ -11,7 +11,7 @@ from builder import loss_builder
 import mmcv
 from mmcv import Config
 from mmcv.runner import build_optimizer
-from mmseg.utils import get_root_logger
+from mmcv.utils import get_logger
 from timm.scheduler import CosineLRScheduler
 
 import warnings
@@ -65,7 +65,7 @@ def main(local_rank, args):
 
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(args.work_dir, f'{timestamp}.log')
-    logger = get_root_logger(log_file=log_file, log_level='INFO')
+    logger = get_logger(name='train', log_file=log_file, log_level='INFO')
     logger.info(f'Config:\n{cfg.pretty_text}')
 
     # build model
@@ -327,3 +327,4 @@ if __name__ == '__main__':
     print(args)
 
     torch.multiprocessing.spawn(main, args=(args,), nprocs=args.gpus)
+    # main(0, args)

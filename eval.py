@@ -9,7 +9,7 @@ from dataloader.dataset import get_nuScenes_label_name
 from builder import loss_builder
 
 from mmcv import Config
-from mmseg.utils import get_root_logger
+from mmcv.utils import get_logger
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -55,7 +55,7 @@ def main(local_rank, args):
         import builtins
         builtins.print = pass_print
 
-    logger = get_root_logger(log_file=None, log_level='INFO')
+    logger = get_logger(name='eval', log_file=None, log_level='INFO')
     logger.info(f'Config:\n{cfg.pretty_text}')
 
     # build model

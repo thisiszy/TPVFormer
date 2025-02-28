@@ -1,9 +1,17 @@
 import os
-import numpy as np
-from torch.utils import data
 import yaml
 import pickle
+import random
+from pathlib import Path
+from typing import Dict, List, Tuple, Any
+
 from mmcv.image.io import imread
+from torch.utils import data
+import numpy as np
+import torch
+from scipy.spatial.transform import Rotation
+
+from dataloader.flink_dataset_loader import FlinkDatasetLoader, FlinkDatapoint, MetadataDetails
 
 class ImagePoint_NuScenes(data.Dataset):
     def __init__(self, data_path, imageset='train', label_mapping="nuscenes.yaml", nusc=None):
@@ -120,3 +128,185 @@ def get_nuScenes_label_name(label_mapping):
         nuScenes_label_name[val_] = nuScenesyaml['labels_16'][val_]
 
     return nuScenes_label_name
+
+class ImagePoint_FLINK(data.Dataset):
+    """
+    Dataset class for loading Flink data.
+
+    Args:
+        data_path (str): Path to the root directory of the Flink dataset.
+        imageset (str, optional): Split of the dataset to use ('train' or 'val'). Defaults to 'train'.
+        label_mapping (str, optional):  Not used in this implementation, kept for consistency.
+        nusc (Any, optional): Not used in this implementation. Defaults to None.
+    """
+    def __init__(self, data_path: str, imageset: str = 'train', label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6, voxel_size: float = 0.1, device: torch.device = torch.device('cpu')):
+        self.data_path: Path = Path(data_path)
+        self.imageset: str = imageset
+        self.label_mapping: str = label_mapping  # Not used, but kept for API consistency
+        self.device: torch.device = device
+        self.img_num: int = img_num
+        self.voxel_size: float = voxel_size
+        self.dataset_loaders: List[FlinkDatasetLoader] = []
+
+        REQUIRED_FOLDERS = {'depth', 'images', 'labels', 'metadata'}
+
+        from alive_progress import alive_bar
+        valid_dataset_paths: List[Path] = []
+        def check_directory(dir_path: Path):
+            # Check if this directory contains any of the required folders
+            if any((dir_path / folder).exists() for folder in REQUIRED_FOLDERS):
+                valid_dataset_paths.append(dir_path)
+                return
+            # Recursively check subdirectories
+            for item in dir_path.iterdir():
+                if item.is_dir():
+                    check_directory(item)
+        check_directory(self.data_path)
+        with alive_bar(len(valid_dataset_paths), title="Loading dataset") as bar:
+            for dataset_path in valid_dataset_paths:
+                self.dataset_loaders.append(FlinkDatasetLoader(dataset_path))
+                bar()
+        
+        if len_dataset is not None:
+            self.len_dataset = len_dataset
+        else:
+            self.len_dataset = sum(len(loader) for loader in self.dataset_loaders)
+
+    def __len__(self) -> int:
+        """Return the number of samples in the dataset."""
+        return self.len_dataset
+
+
+    def __getitem__(self, index: int) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
+        """
+        Get a sample from the dataset.
+
+        Args:
+
+        Returns:
+            Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]: A tuple containing:
+                - List[np.ndarray]: List of 6 images (as numpy arrays).
+                - Dict[str, Any]:  Empty dictionary (for consistency with NuScenes).
+                - np.ndarray:  The combined point cloud data (x, y, z coordinates).
+                - np.ndarray:  The point cloud labels (all ones).
+        """
+        # sample a dataset from the dataset_loaders
+        selected_dataset: FlinkDatasetLoader = random.choice(self.dataset_loaders)
+        # sample img_num images from the selected dataset
+        datapoint_indices: List[int] = random.sample(range(len(selected_dataset)), self.img_num)
+        selected_datapoints: List[FlinkDatapoint] = [selected_dataset[i] for i in datapoint_indices]
+
+        def metadata_to_posematrix(metadata: MetadataDetails) -> np.ndarray:
+            rotation: np.ndarray = np.array(metadata.rotation)
+            position: np.ndarray = np.array(metadata.position)
+            # Create 4x4 transformation matrix
+            # Convert exponential coordinates (axis-angle) to rotation matrix
+            R = Rotation.from_rotvec(rotation).as_matrix()
+            T = np.eye(4)
+            T[:3, :3] = R
+            T[:3, 3] = position
+            return T
+
+        imgs: List[np.ndarray] = []
+        lidar2imgs: List[np.ndarray] = []
+        
+        all_points: List[np.ndarray] = []
+
+        for datapoint in selected_datapoints:
+            pose_matrix: np.ndarray = metadata_to_posematrix(datapoint.metadata.metadata)
+            lidar2imgs.append(pose_matrix)
+            imgs.append(datapoint.get_image())
+            
+            depth = datapoint.get_depth()
+            
+            points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), pose_matrix)
+            all_points.append(points)
+
+        combined_points: np.ndarray = np.concatenate(all_points, axis=0)
+        combined_points = self._voxel_downsample(combined_points, self.voxel_size)
+
+        # Create labels (all ones)
+        points_label: np.ndarray = np.ones((combined_points.shape[0], 1), dtype=np.uint8)
+
+        img_metas: Dict[str, Any] = {
+            'lidar2img': lidar2imgs,
+        }  # Placeholder for consistency
+
+        data_tuple: Tuple[List[np.ndarray], Dict[str, List[np.ndarray]], np.ndarray, np.ndarray] = (imgs, img_metas, combined_points, points_label)
+        return data_tuple
+
+    def _depth_to_pointcloud(self, depth_image: np.ndarray, camera_matrix: np.ndarray, world2cam: np.ndarray) -> np.ndarray:
+        """
+        Convert a depth image to a point cloud in world coordinates.
+
+        Args:
+            depth_image (np.ndarray): Depth image (in millimeters).
+            camera_matrix (np.ndarray): 3x3 camera intrinsic matrix.
+            world2cam (np.ndarray): 4x4 transformation matrix from world to camera coordinates.
+
+        Returns:
+            np.ndarray: Point cloud data (Nx3 array of x, y, z coordinates).
+        """
+        height, width = depth_image.shape[:2]
+        fx: float = camera_matrix[0, 0]
+        fy: float = camera_matrix[1, 1]
+        cx: float = camera_matrix[0, 2]
+        cy: float = camera_matrix[1, 2]
+
+        # Create meshgrid of pixel coordinates
+        v, u = np.meshgrid(np.arange(width), np.arange(height))
+        
+        # Convert depth to meters
+        depth = (depth_image / 1000.0)
+        
+        # Calculate x,y,z coordinates
+        x = (v - cx) * depth / fx
+        y = (u - cy) * depth / fy
+        z = depth
+        
+        # Stack coordinates
+        points = np.stack([x, y, z], axis=-1)
+        
+        # Reshape to (N,3)
+        points = points.reshape(-1, 3)
+        
+        # Filter out invalid points
+        valid_points = depth.reshape(-1) > 1e-5
+        points = points[valid_points]
+        
+        # Transform to world coordinates
+        points = (world2cam[:3, :3] @ points.T).T + world2cam[:3, 3]
+        
+        return points.astype(np.float32)
+
+    def _voxel_downsample(self, points: np.ndarray, voxel_size: float) -> np.ndarray:
+        """
+        Perform voxel grid downsampling on a point cloud using PyTorch.
+
+        Args:
+            points (torch.Tensor): (n, 3) tensor of 3D points.
+            voxel_size (float): Voxel size for downsampling.
+
+        Returns:
+            torch.Tensor: Downsampled point cloud as (m, 3) tensor.
+        """
+        device = self.device  # Keep data on the same device (CPU/GPU)
+
+        points_tensor = torch.from_numpy(points).to(self.device)
+        
+        # Compute voxel indices
+        voxel_indices = torch.floor(points_tensor / voxel_size).to(torch.int32)
+
+        # Unique voxel keys
+        unique_voxels, inverse_indices = torch.unique(voxel_indices, return_inverse=True, dim=0)
+
+        # Compute mean position for each voxel
+        downsampled_points = torch.zeros_like(unique_voxels, dtype=torch.float32, device=device)
+        counts = torch.zeros(len(unique_voxels), dtype=torch.int32, device=device)
+
+        downsampled_points.index_add_(0, inverse_indices, points_tensor)
+        counts.index_add_(0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.int32))
+
+        downsampled_points /= counts.unsqueeze(-1).float()
+
+        return downsampled_points.cpu().numpy()
