@@ -252,7 +252,7 @@ def main(local_rank, args):
                 
                 imgs = imgs.cuda()
                 val_grid_float = val_grid.to(torch.float32).cuda()
-                val_grid_int = val_grid.to(torch.long).cuda()
+                val_grid_int = val_grid.to(torch.long).cpu()
                 vox_label = val_vox_label.cuda()
                 val_pt_labs = val_pt_labs.cuda()
 
