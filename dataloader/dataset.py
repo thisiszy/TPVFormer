@@ -135,13 +135,14 @@ class ImagePoint_FLINK(data.Dataset):
 
     Args:
         data_path (str): Path to the root directory of the Flink dataset.
-        imageset (str, optional): Split of the dataset to use ('train' or 'val'). Defaults to 'train'.
         label_mapping (str, optional):  Not used in this implementation, kept for consistency.
-        nusc (Any, optional): Not used in this implementation. Defaults to None.
+        len_dataset (int, optional): Length of the dataset. Defaults to None.
+        img_num (int, optional): Number of images to sample. Defaults to 6.
+        voxel_size (float, optional): Voxel size for downsampling. Defaults to 0.1.
+        device (torch.device, optional): Device to load the data on. Defaults to 'cuda'.
     """
-    def __init__(self, data_path: str, imageset: str = 'train', label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6, voxel_size: float = 0.1, device: torch.device = torch.device('cpu')):
+    def __init__(self, data_path: str, label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6, voxel_size: float = 0.05, device: torch.device = torch.device('cuda')):
         self.data_path: Path = Path(data_path)
-        self.imageset: str = imageset
         self.label_mapping: str = label_mapping  # Not used, but kept for API consistency
         self.device: torch.device = device
         self.img_num: int = img_num
@@ -215,7 +216,7 @@ class ImagePoint_FLINK(data.Dataset):
         for datapoint in selected_datapoints:
             pose_matrix: np.ndarray = metadata_to_posematrix(datapoint.metadata.metadata)
             lidar2imgs.append(pose_matrix)
-            imgs.append(datapoint.get_image())
+            imgs.append(datapoint.get_image().astype(np.float32) / 255.0)
             
             depth = datapoint.get_depth()
             
