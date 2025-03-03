@@ -9,8 +9,8 @@ dataset_params = dict(
     fill_label = 17,
     fixed_volume_space = True,
     label_mapping = "./config/label_mapping/nuscenes-noIgnore.yaml",
-    max_volume_space = [51.2, 51.2, 3],
-    min_volume_space = [-51.2, -51.2, -5],
+    max_volume_space = [4.0, 4.0, 2.0],
+    min_volume_space = [-4.0, -4.0, -2.0],
 )
 
 train_data_loader = dict(
@@ -34,16 +34,16 @@ occupancy = True
 lovasz_input = 'voxel'
 ce_input = 'voxel'
 
-point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+point_cloud_range = [-4.0, -4.0, -2.0, 4.0, 4.0, 2.0]
 
 _dim_ = 256
 _pos_dim_ = _dim_//2
 _ffn_dim_ = _dim_*2
 _num_levels_ = 4
 _num_cams_ = 6
-tpv_h_ = 100
-tpv_w_ = 100
-tpv_z_ = 8
+tpv_h_ = 50
+tpv_w_ = 50
+tpv_z_ = 50
 scale_h = 1
 scale_w = 1
 scale_z = 1

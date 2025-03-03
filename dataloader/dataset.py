@@ -10,6 +10,7 @@ from torch.utils import data
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
+from alive_progress import alive_bar
 
 from dataloader.flink_dataset_loader import FlinkDatasetLoader, FlinkDatapoint, MetadataDetails
 
@@ -130,6 +131,9 @@ def get_nuScenes_label_name(label_mapping):
     return nuScenes_label_name
 
 class ImagePoint_FLINK(data.Dataset):
+    CATEGORY_STR_TO_ID = {
+        "box": 1,
+    }
     """
     Dataset class for loading Flink data.
 
@@ -151,7 +155,6 @@ class ImagePoint_FLINK(data.Dataset):
 
         REQUIRED_FOLDERS = {'depth', 'images', 'labels', 'metadata'}
 
-        from alive_progress import alive_bar
         valid_dataset_paths: List[Path] = []
         def check_directory(dir_path: Path):
             # Check if this directory contains any of the required folders
@@ -212,6 +215,7 @@ class ImagePoint_FLINK(data.Dataset):
         lidar2imgs: List[np.ndarray] = []
         
         all_points: List[np.ndarray] = []
+        all_labels: List[np.ndarray] = []
 
         for datapoint in selected_datapoints:
             pose_matrix: np.ndarray = metadata_to_posematrix(datapoint.metadata.metadata)
@@ -220,23 +224,50 @@ class ImagePoint_FLINK(data.Dataset):
             
             depth = datapoint.get_depth()
             
-            points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), pose_matrix)
+            points, valid_points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), pose_matrix)
+            labels = np.zeros((depth.shape[0], depth.shape[1]), dtype=np.uint8)
+            for segment in datapoint.label_data.segmentations:
+                bbox = segment.bbox
+                mask = self._rle_to_mask(segment.mask, (bbox[2], bbox[3]))
+                if bbox is not None and mask is not None:
+                    # Extract bbox coordinates
+                    x, y, w, h = bbox
+                    # Create mask array within bbox
+                    mask_array = np.array(mask).reshape(h, w)
+                    # Fill the bbox region with mask values
+                    labels[y:y+h, x:x+w][mask_array == 1] = self.CATEGORY_STR_TO_ID[segment.category_id]
+            labels = labels.reshape(-1, 1)
+
+            points = points[valid_points]
+            labels = labels[valid_points]
             all_points.append(points)
+            all_labels.append(labels)
 
         combined_points: np.ndarray = np.concatenate(all_points, axis=0)
-        combined_points = self._voxel_downsample(combined_points, self.voxel_size)
-
-        # Create labels (all ones)
-        points_label: np.ndarray = np.ones((combined_points.shape[0], 1), dtype=np.uint8)
+        combined_labels: np.ndarray = np.concatenate(all_labels, axis=0)
+        combined_points, combined_labels = self._voxel_downsample(combined_points, self.voxel_size, combined_labels)
 
         img_metas: Dict[str, Any] = {
             'lidar2img': lidar2imgs,
         }  # Placeholder for consistency
 
-        data_tuple: Tuple[List[np.ndarray], Dict[str, List[np.ndarray]], np.ndarray, np.ndarray] = (imgs, img_metas, combined_points, points_label)
+        data_tuple: Tuple[List[np.ndarray], Dict[str, List[np.ndarray]], np.ndarray, np.ndarray] = (imgs, img_metas, combined_points, combined_labels)
         return data_tuple
+    
+    @staticmethod
+    def _rle_to_mask(rle: List[int], shape: Tuple[int, int]) -> np.ndarray:
+        """Convert RLE to binary mask."""
+        mask = np.zeros(shape[0] * shape[1], dtype=np.uint8)
+        current = 0
+        for i in range(0, len(rle), 2):
+            length = rle[i]
+            data = rle[i + 1]
+            start = current
+            mask[start:start + length] = data
+            current = start + length
+        return mask.reshape(shape)
 
-    def _depth_to_pointcloud(self, depth_image: np.ndarray, camera_matrix: np.ndarray, world2cam: np.ndarray) -> np.ndarray:
+    def _depth_to_pointcloud(self, depth_image: np.ndarray, camera_matrix: np.ndarray, world2cam: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Convert a depth image to a point cloud in world coordinates.
 
@@ -246,7 +277,9 @@ class ImagePoint_FLINK(data.Dataset):
             world2cam (np.ndarray): 4x4 transformation matrix from world to camera coordinates.
 
         Returns:
-            np.ndarray: Point cloud data (Nx3 array of x, y, z coordinates).
+            Tuple[np.ndarray, np.ndarray]: Tuple containing:
+                - Point cloud data (Nx3 array of x, y, z coordinates).
+                - Valid points mask (N,) array.
         """
         height, width = depth_image.shape[:2]
         fx: float = camera_matrix[0, 0]
@@ -273,27 +306,30 @@ class ImagePoint_FLINK(data.Dataset):
         
         # Filter out invalid points
         valid_points = depth.reshape(-1) > 1e-5
-        points = points[valid_points]
         
         # Transform to world coordinates
         points = (world2cam[:3, :3] @ points.T).T + world2cam[:3, 3]
         
-        return points.astype(np.float32)
-
-    def _voxel_downsample(self, points: np.ndarray, voxel_size: float) -> np.ndarray:
+        return points.astype(np.float32), valid_points
+    def _voxel_downsample(self, points: np.ndarray, voxel_size: float, labels: np.ndarray | None = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform voxel grid downsampling on a point cloud using PyTorch.
 
         Args:
-            points (torch.Tensor): (n, 3) tensor of 3D points.
+            points (np.ndarray): (n, 3) array of 3D points.
             voxel_size (float): Voxel size for downsampling.
+            labels (np.ndarray | None, optional): (n,) array of point labels. Defaults to None.
 
         Returns:
-            torch.Tensor: Downsampled point cloud as (m, 3) tensor.
+            Tuple[np.ndarray, np.ndarray]: Tuple containing:
+                - Downsampled point cloud as (m, 3) array
+                - Downsampled labels as (m,) array, where each label corresponds to a point in the voxel
         """
         device = self.device  # Keep data on the same device (CPU/GPU)
 
         points_tensor = torch.from_numpy(points).to(self.device)
+        if labels is not None:
+            labels_tensor = torch.from_numpy(labels).to(self.device)
         
         # Compute voxel indices
         voxel_indices = torch.floor(points_tensor / voxel_size).to(torch.int32)
@@ -310,4 +346,10 @@ class ImagePoint_FLINK(data.Dataset):
 
         downsampled_points /= counts.unsqueeze(-1).float()
 
-        return downsampled_points.cpu().numpy()
+        # For each voxel, take the label of any point within it
+        if labels is not None:
+            downsampled_labels = torch.zeros((len(unique_voxels), *labels_tensor.shape[1:]), dtype=labels_tensor.dtype, device=device)
+            downsampled_labels.index_copy_(0, inverse_indices, labels_tensor)
+            return downsampled_points.cpu().numpy(), downsampled_labels.cpu().numpy()
+        
+        return downsampled_points.cpu().numpy(), None
