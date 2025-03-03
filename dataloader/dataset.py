@@ -132,7 +132,8 @@ def get_nuScenes_label_name(label_mapping):
 
 class ImagePoint_FLINK(data.Dataset):
     CATEGORY_STR_TO_ID = {
-        "box": 1,
+        "box": 2,
+        "environment": 1,
     }
     """
     Dataset class for loading Flink data.
@@ -225,7 +226,7 @@ class ImagePoint_FLINK(data.Dataset):
             depth = datapoint.get_depth()
             
             points, valid_points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), pose_matrix)
-            labels = np.zeros((depth.shape[0], depth.shape[1]), dtype=np.uint8)
+            labels = np.ones((depth.shape[0], depth.shape[1]), dtype=np.uint8)
             for segment in datapoint.label_data.segmentations:
                 bbox = segment.bbox
                 mask = self._rle_to_mask(segment.mask, (bbox[2], bbox[3]))

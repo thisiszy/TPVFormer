@@ -6,9 +6,9 @@ _base_ = [
 dataset_params = dict(
     version = "v1.0-trainval",
     ignore_label = 0,
-    fill_label = 17,
+    fill_label = 0,
     fixed_volume_space = True,
-    label_mapping = "./config/label_mapping/nuscenes-noIgnore.yaml",
+    label_mapping = "./config/label_mapping/flink.yaml",
     max_volume_space = [4.0, 4.0, 2.0],
     min_volume_space = [-4.0, -4.0, -2.0],
 )
@@ -50,7 +50,7 @@ scale_z = 1
 grid_size = [tpv_h_*scale_h, tpv_w_*scale_w, tpv_z_*scale_z]
 num_points_in_pillar = [4, 32, 32]
 num_points = [8, 64, 64]
-nbr_class = 18
+nbr_class = 3
 
 model = dict(
     type='TPVFormer',
