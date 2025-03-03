@@ -8,7 +8,6 @@ from typing import Dict, List, Tuple, Any
 from mmcv.image.io import imread
 from torch.utils import data
 import numpy as np
-import torch
 from scipy.spatial.transform import Rotation
 from alive_progress import alive_bar
 
@@ -146,10 +145,9 @@ class ImagePoint_FLINK(data.Dataset):
         voxel_size (float, optional): Voxel size for downsampling. Defaults to 0.1.
         device (torch.device, optional): Device to load the data on. Defaults to 'cuda'.
     """
-    def __init__(self, data_path: str, label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6, voxel_size: float = 0.05, device: torch.device = torch.device('cuda')):
+    def __init__(self, data_path: str, label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6, voxel_size: float = 0.05):
         self.data_path: Path = Path(data_path)
         self.label_mapping: str = label_mapping  # Not used, but kept for API consistency
-        self.device: torch.device = device
         self.img_num: int = img_num
         self.voxel_size: float = voxel_size
         self.dataset_loaders: List[FlinkDatasetLoader] = []
@@ -246,7 +244,12 @@ class ImagePoint_FLINK(data.Dataset):
 
         combined_points: np.ndarray = np.concatenate(all_points, axis=0)
         combined_labels: np.ndarray = np.concatenate(all_labels, axis=0)
-        combined_points, combined_labels = self._voxel_downsample(combined_points, self.voxel_size, combined_labels)
+        # combined_points, combined_labels = ImagePoint_FLINK._voxel_downsample(combined_points, self.voxel_size, combined_labels)
+        # Randomly sample 50000 points if we have more than that
+        if len(combined_points) > 20000:
+            sample_indices = np.random.choice(len(combined_points), 20000, replace=False)
+            combined_points = combined_points[sample_indices]
+            combined_labels = combined_labels[sample_indices]
 
         img_metas: Dict[str, Any] = {
             'lidar2img': lidar2imgs,
@@ -312,45 +315,44 @@ class ImagePoint_FLINK(data.Dataset):
         points = (world2cam[:3, :3] @ points.T).T + world2cam[:3, 3]
         
         return points.astype(np.float32), valid_points
-    def _voxel_downsample(self, points: np.ndarray, voxel_size: float, labels: np.ndarray | None = None) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Perform voxel grid downsampling on a point cloud using PyTorch.
 
-        Args:
-            points (np.ndarray): (n, 3) array of 3D points.
-            voxel_size (float): Voxel size for downsampling.
-            labels (np.ndarray | None, optional): (n,) array of point labels. Defaults to None.
+    # @staticmethod
+    # @nb.njit(parallel=True)
+    # def _voxel_downsample(points: np.ndarray, voxel_size: float, labels: np.ndarray | None = None) -> Tuple[np.ndarray, np.ndarray | None]:
+    #     """
+    #     Simple voxel downsampling by randomly selecting one point per voxel.
 
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: Tuple containing:
-                - Downsampled point cloud as (m, 3) array
-                - Downsampled labels as (m,) array, where each label corresponds to a point in the voxel
-        """
-        device = self.device  # Keep data on the same device (CPU/GPU)
+    #     Args:
+    #         points (np.ndarray): (n, 3) array of 3D points.
+    #         voxel_size (float): Voxel size for downsampling.
+    #         labels (np.ndarray | None, optional): Point labels. Defaults to None.
 
-        points_tensor = torch.from_numpy(points).to(self.device)
-        if labels is not None:
-            labels_tensor = torch.from_numpy(labels).to(self.device)
+    #     Returns:
+    #         Tuple[np.ndarray, np.ndarray | None]: Downsampled points and corresponding labels.
+    #     """
+    #     # Get voxel indices and hash
+    #     voxel_indices = np.floor(points / voxel_size).astype(np.int32)
+    #     voxel_hash = (voxel_indices * np.array([1, 2048, 2048*2048])).sum(axis=1)
         
-        # Compute voxel indices
-        voxel_indices = torch.floor(points_tensor / voxel_size).to(torch.int32)
-
-        # Unique voxel keys
-        unique_voxels, inverse_indices = torch.unique(voxel_indices, return_inverse=True, dim=0)
-
-        # Compute mean position for each voxel
-        downsampled_points = torch.zeros_like(unique_voxels, dtype=torch.float32, device=device)
-        counts = torch.zeros(len(unique_voxels), dtype=torch.int32, device=device)
-
-        downsampled_points.index_add_(0, inverse_indices, points_tensor)
-        counts.index_add_(0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.int32))
-
-        downsampled_points /= counts.unsqueeze(-1).float()
-
-        # For each voxel, take the label of any point within it
-        if labels is not None:
-            downsampled_labels = torch.zeros((len(unique_voxels), *labels_tensor.shape[1:]), dtype=labels_tensor.dtype, device=device)
-            downsampled_labels.index_copy_(0, inverse_indices, labels_tensor)
-            return downsampled_points.cpu().numpy(), downsampled_labels.cpu().numpy()
+    #     # Sort by hash
+    #     sort_idx = np.argsort(voxel_hash)
+    #     sorted_hash = voxel_hash[sort_idx]
         
-        return downsampled_points.cpu().numpy(), None
+    #     # Find unique voxels
+    #     diff = np.ones_like(sorted_hash, dtype=np.bool_)
+    #     diff[:-1] = sorted_hash[1:] != sorted_hash[:-1]
+    #     unique_mask = diff.nonzero()[0]
+    #     num_voxels = len(unique_mask)
+        
+    #     # Randomly select points
+    #     downsampled_points = np.zeros((num_voxels, 3), dtype=np.float32)
+    #     downsampled_labels = np.zeros((num_voxels, labels.shape[1]), dtype=labels.dtype)
+    #     for i in range(num_voxels):
+    #         start_idx = unique_mask[i]
+    #         end_idx = unique_mask[i + 1] if i < num_voxels - 1 else len(sorted_hash)
+    #         random_idx = sort_idx[start_idx + np.random.randint(0, end_idx - start_idx)]
+    #         downsampled_points[i] = points[random_idx]
+    #         if labels is not None:
+    #             downsampled_labels[i] = labels[random_idx]
+            
+    #     return downsampled_points, None if labels is None else downsampled_labels

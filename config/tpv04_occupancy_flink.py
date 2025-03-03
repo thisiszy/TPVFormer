@@ -27,7 +27,7 @@ val_data_loader = dict(
     num_workers = 0,
 )
 
-unique_label = [0, 1]
+unique_label = [0, 1, 2]
 
 
 occupancy = True
