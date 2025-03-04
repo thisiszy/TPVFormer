@@ -142,15 +142,13 @@ class ImagePoint_FLINK(data.Dataset):
         label_mapping (str, optional):  Not used in this implementation, kept for consistency.
         len_dataset (int, optional): Length of the dataset. Defaults to None.
         img_num (int, optional): Number of images to sample. Defaults to 6.
-        voxel_size (float, optional): Voxel size for downsampling. Defaults to 0.1.
         device (torch.device, optional): Device to load the data on. Defaults to 'cuda'.
     """
-    def __init__(self, data_path: str, label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6, voxel_size: float = 0.05):
+    def __init__(self, data_path: str, label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6):
         self.data_path: Path = Path(data_path)
         self.label_mapping: str = label_mapping  # Not used, but kept for API consistency
         self.img_num: int = img_num
-        self.voxel_size: float = voxel_size
-        self.dataset_loaders: List[FlinkDatasetLoader] = []
+        self.dataset_loaders: dict[str, FlinkDatasetLoader] = {}
 
         REQUIRED_FOLDERS = {'depth', 'images', 'labels', 'metadata'}
 
@@ -167,13 +165,13 @@ class ImagePoint_FLINK(data.Dataset):
         check_directory(self.data_path)
         with alive_bar(len(valid_dataset_paths), title="Loading dataset") as bar:
             for dataset_path in valid_dataset_paths:
-                self.dataset_loaders.append(FlinkDatasetLoader(dataset_path))
+                self.dataset_loaders[dataset_path] = FlinkDatasetLoader(dataset_path)
                 bar()
         
         if len_dataset is not None:
             self.len_dataset = len_dataset
         else:
-            self.len_dataset = sum(len(loader) for loader in self.dataset_loaders)
+            self.len_dataset = sum(len(loader) for loader in self.dataset_loaders.values())
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
@@ -194,7 +192,10 @@ class ImagePoint_FLINK(data.Dataset):
                 - np.ndarray:  The point cloud labels (all ones).
         """
         # sample a dataset from the dataset_loaders
-        selected_dataset: FlinkDatasetLoader = random.choice(self.dataset_loaders)
+        [selected_dataset_path, selected_dataset] = random.choice(list(self.dataset_loaders.items()))
+        if selected_dataset is None:
+            self.dataset_loaders[selected_dataset_path] = FlinkDatasetLoader(selected_dataset_path)
+            selected_dataset = self.dataset_loaders[selected_dataset_path]
         # sample img_num images from the selected dataset
         datapoint_indices: List[int] = random.sample(range(len(selected_dataset)), self.img_num)
         selected_datapoints: List[FlinkDatapoint] = [selected_dataset[i] for i in datapoint_indices]
@@ -217,13 +218,18 @@ class ImagePoint_FLINK(data.Dataset):
         all_labels: List[np.ndarray] = []
 
         for datapoint in selected_datapoints:
-            pose_matrix: np.ndarray = metadata_to_posematrix(datapoint.metadata.metadata)
-            lidar2imgs.append(pose_matrix)
-            imgs.append(datapoint.get_image().astype(np.float32) / 255.0)
+            # assume world center is the lidar
+            cam2lidar: np.ndarray = metadata_to_posematrix(datapoint.metadata.metadata)
+            lidar2cam: np.ndarray = np.linalg.inv(cam2lidar)
+            viewpad = np.eye(4)
+            viewpad[:3, :3] = datapoint.metadata.metadata.camera_matrix
+            lidar2img = (viewpad @ lidar2cam)
+            lidar2imgs.append(lidar2img)
+            imgs.append(datapoint.get_image().astype(np.float32))
             
             depth = datapoint.get_depth()
             
-            points, valid_points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), pose_matrix)
+            points, valid_points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), cam2lidar)
             labels = np.ones((depth.shape[0], depth.shape[1]), dtype=np.uint8)
             for segment in datapoint.label_data.segmentations:
                 bbox = segment.bbox
@@ -244,8 +250,8 @@ class ImagePoint_FLINK(data.Dataset):
 
         combined_points: np.ndarray = np.concatenate(all_points, axis=0)
         combined_labels: np.ndarray = np.concatenate(all_labels, axis=0)
-        # combined_points, combined_labels = ImagePoint_FLINK._voxel_downsample(combined_points, self.voxel_size, combined_labels)
-        # Randomly sample 50000 points if we have more than that
+            
+        # Randomly sample points if we have more than that
         if len(combined_points) > 20000:
             sample_indices = np.random.choice(len(combined_points), 20000, replace=False)
             combined_points = combined_points[sample_indices]
