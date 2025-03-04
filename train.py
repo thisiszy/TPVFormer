@@ -1,3 +1,5 @@
+from comet_ml import start
+from comet_ml.integration.pytorch import log_model
 
 import os, time, argparse, os.path as osp, numpy as np
 import torch
@@ -17,6 +19,11 @@ from timm.scheduler import CosineLRScheduler
 import warnings
 warnings.filterwarnings("ignore")
 
+experiment = start(
+  api_key=os.environ.get("COMET_API_KEY"),
+  project_name=os.environ.get("COMET_PROJECT_NAME"),
+  workspace=os.environ.get("COMET_WORKSPACE")
+)
 
 def pass_print(*args, **kwargs):
     pass
@@ -28,6 +35,8 @@ def main(local_rank, args):
     # load config
     cfg = Config.fromfile(args.py_config)
     cfg.work_dir = args.work_dir
+
+    experiment.log_parameters(cfg)
 
     dataset_config = cfg.dataset_params
     ignore_label = dataset_config['ignore_label']
@@ -88,6 +97,7 @@ def main(local_rank, args):
     else:
         my_model = my_model.cuda()
     print('done ddp model')
+    log_model(experiment, model=my_model, model_name="TPVFormer")
 
     # generate datasets
     SemKITTI_label_name = get_nuScenes_label_name(dataset_config["label_mapping"])
