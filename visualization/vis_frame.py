@@ -1,19 +1,12 @@
-
-from mayavi import mlab
-import mayavi
-# mlab.options.offscreen = True
-print("Set mlab.options.offscreen={}".format(mlab.options.offscreen))
-
-import argparse, torch, os, json
+import argparse, torch, os
 import shutil
 import numpy as np
 import mmcv
 from mmcv import Config
 from collections import OrderedDict
 
-# from pyvirtualdisplay import Display
-# display = Display(visible=False, size=(2560, 1440))
-# display.start()
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def revise_ckpt(state_dict):
@@ -58,7 +51,6 @@ def draw(
     cam_positions=None,
     focal_positions=None,
     timestamp=None,
-    mode=0,
 ):
     w, h, z = voxels.shape
     grid = grid.astype(np.int)
@@ -68,120 +60,108 @@ def draw(
         [voxels.shape[0], voxels.shape[1], voxels.shape[2]], voxel_size
     ) + np.array(vox_origin, dtype=np.float32).reshape([1, 3])
 
-    if mode == 0:
-        grid_coords = np.vstack([grid_coords.T, voxels.reshape(-1)]).T
-    
-        # draw a simple car at the middle
-        # car_vox_range = np.array([
-        #     [w//2 - 2 - 4, w//2 - 2 + 4],
-        #     [h//2 - 2 - 4, h//2 - 2 + 4],
-        #     [z//2 - 2 - 3, z//2 - 2 + 3]
-        # ], dtype=np.int)
-        # car_x = np.arange(car_vox_range[0, 0], car_vox_range[0, 1])
-        # car_y = np.arange(car_vox_range[1, 0], car_vox_range[1, 1])
-        # car_z = np.arange(car_vox_range[2, 0], car_vox_range[2, 1])
-        # car_xx, car_yy, car_zz = np.meshgrid(car_x, car_y, car_z)
-        # car_label = np.zeros([8, 8, 6], dtype=np.int)
-        # car_label[:3, :, :2] = 17
-        # car_label[3:6, :, :2] = 18
-        # car_label[6:, :, :2] = 19
-        # car_label[:3, :, 2:4] = 18
-        # car_label[3:6, :, 2:4] = 19
-        # car_label[6:, :, 2:4] = 17
-        # car_label[:3, :, 4:] = 19
-        # car_label[3:6, :, 4:] = 17
-        # car_label[6:, :, 4:] = 18
-        # car_grid = np.array([car_xx.flatten(), car_yy.flatten(), car_zz.flatten()]).T
-        # car_indexes = car_grid[:, 0] * h * z + car_grid[:, 1] * z + car_grid[:, 2]
-        # grid_coords[car_indexes, 3] = car_label.flatten()
-    
-    elif mode == 1:
-        indexes = grid[:, 0] * h * z + grid[:, 1] * z + grid[:, 2]
-        indexes, pt_index = np.unique(indexes, return_index=True)
-        pred_pts = pred_pts[pt_index]
-        grid_coords = grid_coords[indexes]
-        grid_coords = np.vstack([grid_coords.T, pred_pts.reshape(-1)]).T
-    elif mode == 2:
-        indexes = grid[:, 0] * h * z + grid[:, 1] * z + grid[:, 2]
-        indexes, pt_index = np.unique(indexes, return_index=True)
-        gt_label = pt_label[pt_index]
-        grid_coords = grid_coords[indexes]
-        grid_coords = np.vstack([grid_coords.T, gt_label.reshape(-1)]).T
-    else:
-        raise NotImplementedError
-
-    grid_coords[grid_coords[:, 3] == 17, 3] = 20
-
-    # Get the voxels inside FOV
-    fov_grid_coords = grid_coords
-
-    # Remove empty and unknown voxels
-    fov_voxels = fov_grid_coords[
-        (fov_grid_coords[:, 3] > 0) & (fov_grid_coords[:, 3] < 20)
-    ]
-    print(len(fov_voxels))
-    
-    figure = mlab.figure(size=(2560, 1440), bgcolor=(1, 1, 1))
-    # Draw occupied inside FOV voxels
-    voxel_size = sum(voxel_size) / 3
-    plt_plot_fov = mlab.points3d(
-        fov_voxels[:, 1],
-        fov_voxels[:, 0],
-        fov_voxels[:, 2],
-        fov_voxels[:, 3],
-        colormap="viridis",
-        scale_factor=0.95 * voxel_size,
-        mode="cube",
-        opacity=1.0,
-        vmin=1,
-        vmax=19, # 16
+    # Create subplots
+    fig = make_subplots(
+        rows=1, cols=3,
+        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}, {'type': 'scatter3d'}]],
+        subplot_titles=("Occupancy", "Predicted Point Cloud", "Ground Truth Point Cloud")
     )
 
-    colors = np.array(
-        [
-            [255, 120,  50, 255],       # barrier              orange
-            [255, 192, 203, 255],       # bicycle              pink
-            [255, 255,   0, 255],       # bus                  yellow
-            [  0, 150, 245, 255],       # car                  blue
-            [  0, 255, 255, 255],       # construction_vehicle cyan
-            [255, 127,   0, 255],       # motorcycle           dark orange
-            [255,   0,   0, 255],       # pedestrian           red
-            [255, 240, 150, 255],       # traffic_cone         light yellow
-            [135,  60,   0, 255],       # trailer              brown
-            [160,  32, 240, 255],       # truck                purple                
-            [255,   0, 255, 255],       # driveable_surface    dark pink
-            # [175,   0,  75, 255],       # other_flat           dark red
-            [139, 137, 137, 255],
-            [ 75,   0,  75, 255],       # sidewalk             dard purple
-            [150, 240,  80, 255],       # terrain              light green          
-            [230, 230, 250, 255],       # manmade              white
-            [  0, 175,   0, 255],       # vegetation           green
-            [  0, 255, 127, 255],       # ego car              dark cyan
-            [255,  99,  71, 255],       # ego car
-            [  0, 191, 255, 255]        # ego car
-        ]
-    ).astype(np.uint8)
-    
-    plt_plot_fov.glyph.scale_mode = "scale_by_vector"
-    plt_plot_fov.module_manager.scalar_lut_manager.lut.table = colors
+    # --- Occupancy Plot (Mode 0 equivalent) ---
+    grid_coords_occ = np.vstack([grid_coords.T, voxels.reshape(-1)]).T
+    grid_coords_occ[grid_coords_occ[:, 3] == 1, 3] = 20  # Handle special case
+    fov_voxels_occ = grid_coords_occ[
+        (grid_coords_occ[:, 3] > 0) & (grid_coords_occ[:, 3] < 20)
+    ]
 
-    scene = figure.scene
-    scene.camera.position = [  0.75131739, -35.08337438,  16.71378558]
-    scene.camera.focal_point = [  0.75131739, -34.21734897,  16.21378558]
-    scene.camera.view_angle = 40.0
-    scene.camera.view_up = [0.0, 0.0, 1.0]
-    scene.camera.clipping_range = [0.01, 300.]
-    scene.camera.compute_view_plane_normal()
-    scene.render()
+    scatter_occ = go.Scatter3d(
+        x=fov_voxels_occ[:, 1], y=fov_voxels_occ[:, 0], z=fov_voxels_occ[:, 2],
+        mode='markers',
+        marker=dict(
+            size=5,
+            color=fov_voxels_occ[:, 3],
+            colorscale='Viridis',
+            opacity=0.8,
+            colorbar=dict(title="Occupancy", x=0.28)  # Adjust colorbar position
+        )
+    )
+    fig.add_trace(scatter_occ, row=1, col=1)
 
-    # scene.camera.position = [ 0.75131739,  0.78265103, 93.21378558]
-    # scene.camera.focal_point = [ 0.75131739,  0.78265103, 92.21378558]
-    # scene.camera.view_angle = 40.0
-    # scene.camera.view_up = [0., 1., 0.]
-    # scene.camera.clipping_range = [0.01, 400.]
-    # scene.camera.compute_view_plane_normal()
-    # scene.render()
-    mlab.show()
+    # --- Predicted Point Cloud Plot (Mode 1 equivalent) ---
+    indexes = grid[:, 0] * h * z + grid[:, 1] * z + grid[:, 2]
+    indexes, pt_index = np.unique(indexes, return_index=True)
+    pred_pts = pred_pts[pt_index]
+    grid_coords_pred = grid_coords[indexes]
+    grid_coords_pred = np.vstack([grid_coords_pred.T, pred_pts.reshape(-1)]).T
+
+    scatter_pred = go.Scatter3d(
+        x=grid_coords_pred[:, 1], y=grid_coords_pred[:, 0], z=grid_coords_pred[:, 2],
+        mode='markers',
+        marker=dict(
+            size=voxel_size*5, # Use voxel_size for cube size
+            color=grid_coords_pred[:, 3],
+            colorscale='Viridis',
+            opacity=0.8,
+            colorbar=dict(title="Predicted", x=0.64), # Adjust colorbar position
+            symbol='square'  # Change marker symbol to square (cube in 3D)
+        )
+    )
+    fig.add_trace(scatter_pred, row=1, col=2)
+
+    # --- Ground Truth Point Cloud Plot (Mode 2 equivalent) ---
+    indexes = grid[:, 0] * h * z + grid[:, 1] * z + grid[:, 2]
+    indexes, pt_index = np.unique(indexes, return_index=True)
+    gt_label = pt_label[pt_index]
+    grid_coords_gt = grid_coords[indexes]
+    grid_coords_gt = np.vstack([grid_coords_gt.T, gt_label.reshape(-1)]).T
+
+    scatter_gt = go.Scatter3d(
+        x=grid_coords_gt[:, 1], y=grid_coords_gt[:, 0], z=grid_coords_gt[:, 2],
+        mode='markers',
+        marker=dict(
+            size=voxel_size*5,  #Use voxel_size for cube size
+            color=grid_coords_gt[:, 3],
+            colorscale='Viridis',
+            opacity=0.8,
+            colorbar=dict(title="Ground Truth", x=1.0),  # Adjust colorbar position
+            symbol='square' # Change marker symbol to square (cube in 3D)
+        )
+    )
+    fig.add_trace(scatter_gt, row=1, col=3)
+
+    # --- Layout Settings ---
+    # Calculate axis ranges based on your data's extent
+    min_x, max_x = grid_coords[:, 1].min(), grid_coords[:, 1].max()
+    min_y, max_y = grid_coords[:, 0].min(), grid_coords[:, 0].max()
+    min_z, max_z = grid_coords[:, 2].min(), grid_coords[:, 2].max()
+
+    # Find overall min and max to create a common range
+    overall_min = min(min_x, min_y, min_z)
+    overall_max = max(max_x, max_y, max_z)
+    range_val = [overall_min, overall_max]
+
+    fig.update_layout(
+        title="TPVFormer Visualization",
+        height=800, width=2400,  # Adjusted width for three plots
+        scene=dict(bgcolor="rgba(0,0,0,0)",
+                   xaxis=dict(range=range_val),
+                   yaxis=dict(range=range_val),
+                   zaxis=dict(range=range_val),
+                   aspectmode='cube'),  # Important for equal aspect ratio
+        scene2=dict(bgcolor="rgba(0,0,0,0)",
+                    xaxis=dict(range=range_val),
+                    yaxis=dict(range=range_val),
+                    zaxis=dict(range=range_val),
+                    aspectmode='cube'), # Important for equal aspect ratio
+        scene3=dict(bgcolor="rgba(0,0,0,0)",
+                    xaxis=dict(range=range_val),
+                    yaxis=dict(range=range_val),
+                    zaxis=dict(range=range_val),
+                    aspectmode='cube'), # Important for equal aspect ratio
+        showlegend=False
+    )
+
+    fig.show()
 
 
 if __name__ == "__main__":
@@ -198,10 +178,10 @@ if __name__ == "__main__":
     parser.add_argument('--save-path', type=str, default='out/tpv_occupancy/frames')
     parser.add_argument('--frame-idx', type=int, default=0, nargs='+', 
                         help='idx of frame to visualize, the idx corresponds to the order in pkl file.')
-    parser.add_argument('--mode', type=int, default=0, help='0: occupancy, 1: predicted point cloud, 2: gt point cloud')
-
+    # parser.add_argument('--mode', type=int, default=0, help='0: occupancy, 1: predicted point cloud, 2: gt point cloud') # Removed mode argument
     args = parser.parse_args()
     print(args)
+
 
     cfg = Config.fromfile(args.py_config)
     dataset_config = cfg.dataset_params
@@ -297,14 +277,15 @@ if __name__ == "__main__":
             else:
                 print(f"File {filename} does not exist")
 
-        draw(predict_vox, 
-             predict_pts,
-             voxel_origin, 
-             resolution, 
-             grid.squeeze(0).cpu().numpy(), 
-             pt_label.squeeze(-1),
-             frame_dir,
-             img_metas['cam_positions'],
-             img_metas['focal_positions'],
-             timestamp=timestamp,
-             mode=args.mode)
+        # for mode in [2]:  # Removed mode loop
+        draw(predict_vox,
+            predict_pts,
+            voxel_origin,
+            resolution,
+            grid.squeeze(0).cpu().numpy(),
+            pt_label.squeeze(-1),
+            frame_dir,
+            img_metas['cam_positions'],
+            img_metas['focal_positions'],
+            timestamp=timestamp)
+
