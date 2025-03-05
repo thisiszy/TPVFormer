@@ -12,8 +12,8 @@ def build(dataset_config,
           dist=False,
           scale_rate=1,
     ):
-    if train_dataloader_config["dataset_type"] == "ImagePoint_NuScenes":
-        data_path = train_dataloader_config["data_path"]
+    if dataset_config["dataset_type"] == "ImagePoint_NuScenes":
+        data_path = dataset_config["data_path"]
         train_imageset = train_dataloader_config["imageset"]
         val_imageset = val_dataloader_config["imageset"]
         label_mapping = dataset_config["label_mapping"]
@@ -23,15 +23,15 @@ def build(dataset_config,
                                         label_mapping=label_mapping, nusc=nusc)
         val_dataset = ImagePoint_NuScenes(data_path, imageset=val_imageset,
                                     label_mapping=label_mapping, nusc=nusc)
-    elif train_dataloader_config["dataset_type"] == "ImagePoint_FLINK":
+    elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
         label_mapping = dataset_config["label_mapping"]
-        train_data_path = train_dataloader_config["data_path"]
+        train_data_path = dataset_config["data_path"]
         val_data_path = val_dataloader_config["data_path"]
 
         train_dataset = ImagePoint_FLINK(train_data_path, label_mapping=label_mapping)
         val_dataset = ImagePoint_FLINK(val_data_path, label_mapping=label_mapping)
     else:
-        raise ValueError(f"Invalid dataset type: {train_dataloader_config['dataset_type']}")
+        raise ValueError(f"Invalid dataset type: {dataset_config['dataset_type']}")
 
     train_dataset = DatasetWrapper_NuScenes(
         train_dataset,
