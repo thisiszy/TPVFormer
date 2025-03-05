@@ -13,7 +13,7 @@ def build(dataset_config,
           scale_rate=1,
     ):
     if dataset_config["dataset_type"] == "ImagePoint_NuScenes":
-        data_path = dataset_config["data_path"]
+        data_path = train_dataloader_config["data_path"]
         train_imageset = train_dataloader_config["imageset"]
         val_imageset = val_dataloader_config["imageset"]
         label_mapping = dataset_config["label_mapping"]
@@ -25,7 +25,7 @@ def build(dataset_config,
                                     label_mapping=label_mapping, nusc=nusc)
     elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
         label_mapping = dataset_config["label_mapping"]
-        train_data_path = dataset_config["data_path"]
+        train_data_path = train_dataloader_config["data_path"]
         val_data_path = val_dataloader_config["data_path"]
 
         train_dataset = ImagePoint_FLINK(train_data_path, label_mapping=label_mapping)
