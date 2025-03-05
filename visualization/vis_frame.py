@@ -53,12 +53,38 @@ def draw(
     timestamp=None,
 ):
     w, h, z = voxels.shape
-    grid = grid.astype(np.int)
+    grid = grid.astype(int)
 
     # Compute the voxels coordinates
     grid_coords = get_grid_coords(
         [voxels.shape[0], voxels.shape[1], voxels.shape[2]], voxel_size
     ) + np.array(vox_origin, dtype=np.float32).reshape([1, 3])
+
+    # Define colors (from vis_scene.py)
+    colors = np.array(
+        [
+            [255, 120,  50],  # barrier              orange
+            [255, 192, 203],  # bicycle              pink
+            [255, 255,   0],  # bus                  yellow
+            [  0, 150, 245],  # car                  blue
+            [  0, 255, 255],  # construction_vehicle cyan
+            [255, 127,   0],  # motorcycle           dark orange
+            [255,   0,   0],  # pedestrian           red
+            [255, 240, 150],  # traffic_cone         light yellow
+            [135,  60,   0],  # trailer              brown
+            [160,  32, 240],  # truck                purple
+            [255,   0, 255],  # driveable_surface    dark pink
+            # [175,   0,  75, 255],       # other_flat           dark red
+            [139, 137, 137],
+            [ 75,   0,  75],  # sidewalk             dard purple
+            [150, 240,  80],  # terrain              light green
+            [230, 230, 250],  # manmade              white
+            [  0, 175,   0],  # vegetation           green
+            [  0, 255, 127],  # ego car              dark cyan
+            [255,  99,  71],  # ego car
+            [  0, 191, 255]   # ego car
+        ]
+    ).astype(np.uint8)
 
     # Create subplots
     fig = make_subplots(
@@ -70,18 +96,20 @@ def draw(
     # --- Occupancy Plot (Mode 0 equivalent) ---
     grid_coords_occ = np.vstack([grid_coords.T, voxels.reshape(-1)]).T
     grid_coords_occ[grid_coords_occ[:, 3] == 1, 3] = 20  # Handle special case
+
     fov_voxels_occ = grid_coords_occ[
         (grid_coords_occ[:, 3] > 0) & (grid_coords_occ[:, 3] < 20)
     ]
+    fov_voxels_occ_colors = colors[fov_voxels_occ[:, 3].astype(int) % len(colors)]
 
     scatter_occ = go.Scatter3d(
         x=fov_voxels_occ[:, 1], y=fov_voxels_occ[:, 0], z=fov_voxels_occ[:, 2],
         mode='markers',
         marker=dict(
-            size=5,
-            color=fov_voxels_occ[:, 3],
+            size=3,
+            color=[f"rgb({r}, {g}, {b})" for r, g, b in fov_voxels_occ_colors],
             colorscale='Viridis',
-            opacity=0.8,
+            opacity=1.0,
             colorbar=dict(title="Occupancy", x=0.28)  # Adjust colorbar position
         )
     )
@@ -94,14 +122,16 @@ def draw(
     grid_coords_pred = grid_coords[indexes]
     grid_coords_pred = np.vstack([grid_coords_pred.T, pred_pts.reshape(-1)]).T
 
+    # Map predicted labels to colors
+    pred_colors = colors[grid_coords_pred[:, 3].astype(int) % len(colors)]  # Handle out-of-bound labels
+
     scatter_pred = go.Scatter3d(
         x=grid_coords_pred[:, 1], y=grid_coords_pred[:, 0], z=grid_coords_pred[:, 2],
         mode='markers',
         marker=dict(
             size=voxel_size*5, # Use voxel_size for cube size
-            color=grid_coords_pred[:, 3],
-            colorscale='Viridis',
-            opacity=0.8,
+            color=[f"rgb({r}, {g}, {b})" for r, g, b in pred_colors],  # Use the mapped colors
+            opacity=1.0,
             colorbar=dict(title="Predicted", x=0.64), # Adjust colorbar position
             symbol='square'  # Change marker symbol to square (cube in 3D)
         )
@@ -115,14 +145,16 @@ def draw(
     grid_coords_gt = grid_coords[indexes]
     grid_coords_gt = np.vstack([grid_coords_gt.T, gt_label.reshape(-1)]).T
 
+    # Map ground truth labels to colors
+    gt_colors = colors[grid_coords_gt[:, 3].astype(int) % len(colors)] # Handle out-of-bound labels
+
     scatter_gt = go.Scatter3d(
         x=grid_coords_gt[:, 1], y=grid_coords_gt[:, 0], z=grid_coords_gt[:, 2],
         mode='markers',
         marker=dict(
             size=voxel_size*5,  #Use voxel_size for cube size
-            color=grid_coords_gt[:, 3],
-            colorscale='Viridis',
-            opacity=0.8,
+            color=[f"rgb({r}, {g}, {b})" for r, g, b in gt_colors], # Use the mapped colors.
+            opacity=1.0,
             colorbar=dict(title="Ground Truth", x=1.0),  # Adjust colorbar position
             symbol='square' # Change marker symbol to square (cube in 3D)
         )
@@ -277,7 +309,6 @@ if __name__ == "__main__":
             else:
                 print(f"File {filename} does not exist")
 
-        # for mode in [2]:  # Removed mode loop
         draw(predict_vox,
             predict_pts,
             voxel_origin,
