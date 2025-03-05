@@ -223,36 +223,54 @@ if __name__ == "__main__":
 
     # prepare data
     from nuscenes import NuScenes
-    from visualization.dataset import ImagePoint_NuScenes_vis, DatasetWrapper_NuScenes_vis
+    from visualization.dataset import ImagePoint_NuScenes_vis, DatasetWrapper_NuScenes_vis, ImagePoint_FLINK_vis
 
     if args.vis_train:
         pkl_path = 'data/nuscenes_infos_train.pkl'
     else:
         pkl_path = 'data/nuscenes_infos_val.pkl'
     
-    data_path = 'data/nuscenes'
+    data_path = cfg.train_data_loader["data_path"]
     label_mapping = dataset_config['label_mapping']
 
-    nusc = NuScenes(version='v1.0-trainval', dataroot=data_path, verbose=True)
-        
-    pt_dataset = ImagePoint_NuScenes_vis(
-        data_path, imageset=pkl_path,
-        label_mapping=label_mapping, nusc=nusc)
+    if dataset_config["dataset_type"] == "ImagePoint_NuScenes":
+        nusc = NuScenes(version='v1.0-trainval', dataroot=data_path, verbose=True)
+            
+        pt_dataset = ImagePoint_NuScenes_vis(
+            data_path, imageset=pkl_path,
+            label_mapping=label_mapping, nusc=nusc)
 
-    dataset = DatasetWrapper_NuScenes_vis(
-        pt_dataset,
-        grid_size=cfg.grid_size,
-        fixed_volume_space=dataset_config['fixed_volume_space'],
-        max_volume_space=dataset_config['max_volume_space'],
-        min_volume_space=dataset_config['min_volume_space'],
-        ignore_label=dataset_config["fill_label"],
-        phase='val'
-    )
-    print(len(dataset))
+        dataset = DatasetWrapper_NuScenes_vis(
+            pt_dataset,
+            grid_size=cfg.grid_size,
+            fixed_volume_space=dataset_config['fixed_volume_space'],
+            max_volume_space=dataset_config['max_volume_space'],
+            min_volume_space=dataset_config['min_volume_space'],
+            ignore_label=dataset_config["fill_label"],
+            phase='val'
+        )
+        print(len(dataset))
+    elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
+        pt_dataset = ImagePoint_FLINK_vis(
+            data_path, label_mapping=label_mapping)
+
+        dataset = DatasetWrapper_NuScenes_vis(
+            pt_dataset,
+            grid_size=cfg.grid_size,
+            fixed_volume_space=dataset_config['fixed_volume_space'],
+            max_volume_space=dataset_config['max_volume_space'],
+            min_volume_space=dataset_config['min_volume_space'],
+            ignore_label=dataset_config["fill_label"],
+            phase='val'
+        )
+        print(len(dataset))
+    else:
+        raise ValueError(f"Invalid dataset type: {dataset_config['dataset_type']}")
+
 
     for index in args.frame_idx:
         print(f'processing frame {index}')
-        batch_data, filelist, scene_meta, timestamp = dataset[index]
+        batch_data, filelist, _, timestamp = dataset[index]
         imgs, img_metas, vox_label, grid, pt_label = batch_data
         imgs = torch.from_numpy(np.stack([imgs]).astype(np.float32)).to(device)
         grid = torch.from_numpy(np.stack([grid]).astype(np.float32)).to(device)
@@ -274,7 +292,10 @@ if __name__ == "__main__":
         os.makedirs(frame_dir, exist_ok=True)
         
         for filename in filelist:            
-            shutil.copy(filename, os.path.join(frame_dir, os.path.basename(filename)))
+            if os.path.exists(filename):
+                shutil.copy(filename, os.path.join(frame_dir, os.path.basename(filename)))
+            else:
+                print(f"File {filename} does not exist")
 
         draw(predict_vox, 
              predict_pts,

@@ -4,6 +4,7 @@ _base_ = [
 ]
 
 dataset_params = dict(
+    dataset_type = "ImagePoint_FLINK",
     version = "v1.0-trainval",
     ignore_label = 0,
     fill_label = 0,

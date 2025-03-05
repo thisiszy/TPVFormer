@@ -233,7 +233,7 @@ class ImagePoint_FLINK(data.Dataset):
             labels = np.ones((depth.shape[0], depth.shape[1]), dtype=np.uint8)
             for segment in datapoint.label_data.segmentations:
                 bbox = segment.bbox
-                mask = self._rle_to_mask(segment.mask, (bbox[2], bbox[3]))
+                mask = ImagePoint_FLINK._rle_to_mask(segment.mask, (bbox[2], bbox[3]))
                 if bbox is not None and mask is not None:
                     # Extract bbox coordinates
                     x, y, w, h = bbox
