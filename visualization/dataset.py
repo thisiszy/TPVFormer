@@ -246,15 +246,15 @@ class ImagePoint_FLINK_vis(data.Dataset):
                     check_directory(item)
         check_directory(self.data_path)
         with alive_bar(len(valid_dataset_paths), title="Loading dataset") as bar:
-            for dataset_path in valid_dataset_paths:
-                self.dataset_loaders[dataset_path] = FlinkDatasetLoader(dataset_path)
+            for i, dataset_path in enumerate(valid_dataset_paths):
+                self.dataset_loaders[i] = (dataset_path, FlinkDatasetLoader(dataset_path))
                 bar()
         
         # self.len_dataset = 10000
         if len_dataset is not None:
             self.len_dataset = len_dataset
         else:
-            self.len_dataset = sum(len(loader) for loader in self.dataset_loaders.values())
+            self.len_dataset = sum(len(loader) for _, loader in self.dataset_loaders)
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
