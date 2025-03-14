@@ -229,7 +229,7 @@ class ImagePoint_FLINK_vis(data.Dataset):
         self.data_path: Path = Path(data_path)
         self.label_mapping: str = label_mapping  # Not used, but kept for API consistency
         self.img_num: int = img_num
-        self.dataset_loaders: dict[str, FlinkDatasetLoader] = {}
+        self.dataset_loaders: list[tuple[str, FlinkDatasetLoader]] = []
 
         REQUIRED_FOLDERS = {'depth', 'images', 'labels', 'metadata'}
 
@@ -238,18 +238,19 @@ class ImagePoint_FLINK_vis(data.Dataset):
             # Check if this directory contains any of the required folders
             if any((dir_path / folder).exists() for folder in REQUIRED_FOLDERS):
                 valid_dataset_paths.append(dir_path)
+                self.dataset_loaders.append((dir_path, None))
                 return
             # Recursively check subdirectories
             for item in dir_path.iterdir():
                 if item.is_dir():
                     check_directory(item)
         check_directory(self.data_path)
-        print(valid_dataset_paths, self.data_path)
         with alive_bar(len(valid_dataset_paths), title="Loading dataset") as bar:
             for dataset_path in valid_dataset_paths:
                 self.dataset_loaders[dataset_path] = FlinkDatasetLoader(dataset_path)
                 bar()
         
+        # self.len_dataset = 10000
         if len_dataset is not None:
             self.len_dataset = len_dataset
         else:
@@ -258,29 +259,10 @@ class ImagePoint_FLINK_vis(data.Dataset):
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
         return self.len_dataset
-
-
-    def __getitem__(self, index: int) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
-        """
-        Get a sample from the dataset.
-
-        Args:
-
-        Returns:
-            Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]: A tuple containing:
-                - List[np.ndarray]: List of 6 images (as numpy arrays).
-                - Dict[str, Any]:  Empty dictionary (for consistency with NuScenes).
-                - np.ndarray:  The combined point cloud data (x, y, z coordinates).
-                - np.ndarray:  The point cloud labels (all ones).
-        """
-        # sample a dataset from the dataset_loaders
-        [selected_dataset_path, selected_dataset] = random.choice(list(self.dataset_loaders.items()))
-        if selected_dataset is None:
-            self.dataset_loaders[selected_dataset_path] = FlinkDatasetLoader(selected_dataset_path)
-            selected_dataset = self.dataset_loaders[selected_dataset_path]
-        # sample img_num images from the selected dataset
-        datapoint_indices: List[int] = random.sample(range(len(selected_dataset)), self.img_num)
-        selected_datapoints: List[FlinkDatapoint] = [selected_dataset[i] for i in datapoint_indices]
+    
+    def get_datapoint(self, dataset_idx:int, camera_idxs:List[int]) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
+        _, selected_dataset = self.dataset_loaders[dataset_idx]
+        selected_datapoints: List[FlinkDatapoint] = [selected_dataset[i] for i in camera_idxs]
 
         def metadata_to_posematrix(metadata: MetadataDetails) -> np.ndarray:
             rotation: np.ndarray = np.array(metadata.rotation)
@@ -339,19 +321,44 @@ class ImagePoint_FLINK_vis(data.Dataset):
         combined_labels: np.ndarray = np.concatenate(all_labels, axis=0)
             
         # Randomly sample points if we have more than that
-        if len(combined_points) > 20000:
-            sample_indices = np.random.choice(len(combined_points), 20000, replace=False)
+        if len(combined_points) > 200000:
+            sample_indices = np.random.choice(len(combined_points), 200000, replace=False)
             combined_points = combined_points[sample_indices]
             combined_labels = combined_labels[sample_indices]
 
         img_metas: Dict[str, Any] = {
             'lidar2img': lidar2imgs,
             'cam_positions': cam_positions,
-            'focal_positions': focal_positions
+            'focal_positions': focal_positions,
+            'raw_points': combined_points,
+            'raw_labels': combined_labels
         }  # Placeholder for consistency
 
         data_tuple: Tuple[List[np.ndarray], Dict[str, List[np.ndarray]], np.ndarray, np.ndarray] = (imgs, img_metas, combined_points, combined_labels)
         return data_tuple, ["fake_filename"], "fake_scene_meta", None
+
+    def __getitem__(self, index: int) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
+        """
+        Get a sample from the dataset.
+
+        Args:
+
+        Returns:
+            Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]: A tuple containing:
+                - List[np.ndarray]: List of 6 images (as numpy arrays).
+                - Dict[str, Any]:  Empty dictionary (for consistency with NuScenes).
+                - np.ndarray:  The combined point cloud data (x, y, z coordinates).
+                - np.ndarray:  The point cloud labels (all ones).
+        """
+        # sample a dataset from the dataset_loaders
+        selected_dataset_idx = random.randint(0, len(self.dataset_loaders)-1)
+        selected_dataset_path, selected_dataset = self.dataset_loaders[selected_dataset_idx]
+        if selected_dataset is None:
+            selected_dataset = FlinkDatasetLoader(selected_dataset_path)
+            self.dataset_loaders[selected_dataset_idx] = (selected_dataset_path, selected_dataset)
+        # sample img_num images from the selected dataset
+        datapoint_indices: List[int] = random.sample(range(len(selected_dataset)), self.img_num)
+        return self.get_datapoint(selected_dataset_idx, datapoint_indices)
     
     @staticmethod
     def _rle_to_mask(rle: List[int], shape: Tuple[int, int]) -> np.ndarray:
