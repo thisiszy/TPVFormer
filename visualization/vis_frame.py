@@ -44,16 +44,14 @@ def draw(
     voxels,          # semantic occupancy predictions
     pred_pts,        # lidarseg predictions
     vox_origin,
-    voxel_size=0.2,  # voxel size in the real world
-    grid=None,       # voxel coordinates of point cloud
+    voxel_size=np.array([0.2, 0.2, 0.2], dtype=np.float32),  # voxel size in the real world
+    pt_coords=None,       # voxel coordinates of point cloud
     pt_label=None,   # label of point cloud
-    save_dirs=None,
-    cam_positions=None,
-    focal_positions=None,
-    timestamp=None,
+    raw_points=None,
+    raw_labels=None,
 ):
     w, h, z = voxels.shape
-    grid = grid.astype(int)
+    pt_coords = pt_coords.astype(int)
 
     # Compute the voxels coordinates
     grid_coords = get_grid_coords(
@@ -88,9 +86,9 @@ def draw(
 
     # Create subplots
     fig = make_subplots(
-        rows=1, cols=3,
-        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}, {'type': 'scatter3d'}]],
-        subplot_titles=("Occupancy", "Predicted Point Cloud", "Ground Truth Point Cloud")
+        rows=1, cols=4,
+        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}, {'type': 'scatter3d'}, {'type': 'scatter3d'}]],
+        subplot_titles=("Occupancy", "Predicted Point Cloud", "Ground Truth Point Cloud", "Raw Point Cloud")
     )
 
     # --- Occupancy Plot (Mode 0 equivalent) ---
@@ -110,13 +108,14 @@ def draw(
             color=[f"rgb({r}, {g}, {b})" for r, g, b in fov_voxels_occ_colors],
             colorscale='Viridis',
             opacity=1.0,
-            colorbar=dict(title="Occupancy", x=0.28)  # Adjust colorbar position
+            colorbar=dict(title="Occupancy", x=0.28),  # Adjust colorbar position
+            line=dict(width=0)  # Remove white edges
         )
     )
     fig.add_trace(scatter_occ, row=1, col=1)
 
     # --- Predicted Point Cloud Plot (Mode 1 equivalent) ---
-    indexes = grid[:, 0] * h * z + grid[:, 1] * z + grid[:, 2]
+    indexes = pt_coords[:, 0] * h * z + pt_coords[:, 1] * z + pt_coords[:, 2]
     indexes, pt_index = np.unique(indexes, return_index=True)
     pred_pts = pred_pts[pt_index]
     grid_coords_pred = grid_coords[indexes]
@@ -129,17 +128,18 @@ def draw(
         x=grid_coords_pred[:, 1], y=grid_coords_pred[:, 0], z=grid_coords_pred[:, 2],
         mode='markers',
         marker=dict(
-            size=voxel_size*5, # Use voxel_size for cube size
+            size=voxel_size.max() * 50, # Use voxel_size for cube size
             color=[f"rgb({r}, {g}, {b})" for r, g, b in pred_colors],  # Use the mapped colors
             opacity=1.0,
             colorbar=dict(title="Predicted", x=0.64), # Adjust colorbar position
-            symbol='square'  # Change marker symbol to square (cube in 3D)
+            symbol='square',  # Change marker symbol to square (cube in 3D)
+            line=dict(width=0)  # Remove white edges
         )
     )
     fig.add_trace(scatter_pred, row=1, col=2)
 
     # --- Ground Truth Point Cloud Plot (Mode 2 equivalent) ---
-    indexes = grid[:, 0] * h * z + grid[:, 1] * z + grid[:, 2]
+    indexes = pt_coords[:, 0] * h * z + pt_coords[:, 1] * z + pt_coords[:, 2]
     indexes, pt_index = np.unique(indexes, return_index=True)
     gt_label = pt_label[pt_index]
     grid_coords_gt = grid_coords[indexes]
@@ -152,14 +152,29 @@ def draw(
         x=grid_coords_gt[:, 1], y=grid_coords_gt[:, 0], z=grid_coords_gt[:, 2],
         mode='markers',
         marker=dict(
-            size=voxel_size*5,  #Use voxel_size for cube size
+            size=voxel_size.max() * 50,  #Use voxel_size for cube size
             color=[f"rgb({r}, {g}, {b})" for r, g, b in gt_colors], # Use the mapped colors.
             opacity=1.0,
             colorbar=dict(title="Ground Truth", x=1.0),  # Adjust colorbar position
-            symbol='square' # Change marker symbol to square (cube in 3D)
+            symbol='square', # Change marker symbol to square (cube in 3D)
+            line=dict(width=0)  # Remove white edges
         )
     )
     fig.add_trace(scatter_gt, row=1, col=3)
+    # --- Raw Point Cloud Plot (Mode 3 equivalent) ---
+    raw_colors = colors[raw_labels.astype(int).squeeze(-1) % len(colors)]
+    scatter_raw = go.Scatter3d(
+        x=raw_points[:, 0], y=raw_points[:, 1], z=raw_points[:, 2],
+        mode='markers',
+        marker=dict(
+            size=voxel_size.max() * 10,  # Reduced size multiplier for smaller dots
+            color=[f"rgb({r}, {g}, {b})" for r, g, b in raw_colors], # Use the mapped colors.
+            colorbar=dict(title="Raw", x=1.0),  # Adjust colorbar position
+            symbol='circle',
+            line=dict(width=0)  # Remove white edges
+        )
+    )
+    fig.add_trace(scatter_raw, row=1, col=4)
 
     # --- Layout Settings ---
     # Calculate axis ranges based on your data's extent
@@ -190,10 +205,16 @@ def draw(
                     yaxis=dict(range=range_val),
                     zaxis=dict(range=range_val),
                     aspectmode='cube'), # Important for equal aspect ratio
+        scene4=dict(bgcolor="rgba(0,0,0,0)",
+                    xaxis=dict(range=range_val),
+                    yaxis=dict(range=range_val),
+                    zaxis=dict(range=range_val),
+                    aspectmode='cube'), # Important for equal aspect ratio
         showlegend=False
     )
 
-    fig.show()
+    # fig.show()
+    return fig
 
 
 if __name__ == "__main__":
@@ -242,52 +263,41 @@ if __name__ == "__main__":
     else:
         pkl_path = 'data/nuscenes_infos_val.pkl'
     
-    data_path = cfg.train_data_loader["data_path"]
+    data_path = cfg.val_data_loader["data_path"]
     label_mapping = dataset_config['label_mapping']
 
     if dataset_config["dataset_type"] == "ImagePoint_NuScenes":
         nusc = NuScenes(version='v1.0-trainval', dataroot=data_path, verbose=True)
-            
         pt_dataset = ImagePoint_NuScenes_vis(
             data_path, imageset=pkl_path,
             label_mapping=label_mapping, nusc=nusc)
-
-        dataset = DatasetWrapper_NuScenes_vis(
-            pt_dataset,
-            grid_size=cfg.grid_size,
-            fixed_volume_space=dataset_config['fixed_volume_space'],
-            max_volume_space=dataset_config['max_volume_space'],
-            min_volume_space=dataset_config['min_volume_space'],
-            ignore_label=dataset_config["fill_label"],
-            phase='val'
-        )
-        print(len(dataset))
     elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
         pt_dataset = ImagePoint_FLINK_vis(
             data_path, label_mapping=label_mapping)
-
-        dataset = DatasetWrapper_NuScenes_vis(
-            pt_dataset,
-            grid_size=cfg.grid_size,
-            fixed_volume_space=dataset_config['fixed_volume_space'],
-            max_volume_space=dataset_config['max_volume_space'],
-            min_volume_space=dataset_config['min_volume_space'],
-            ignore_label=dataset_config["fill_label"],
-            phase='val'
-        )
-        print(len(dataset))
     else:
         raise ValueError(f"Invalid dataset type: {dataset_config['dataset_type']}")
 
+    dataset = DatasetWrapper_NuScenes_vis(
+        pt_dataset,
+        grid_size=cfg.grid_size,
+        fixed_volume_space=dataset_config['fixed_volume_space'],
+        max_volume_space=dataset_config['max_volume_space'],
+        min_volume_space=dataset_config['min_volume_space'],
+        ignore_label=dataset_config["fill_label"],
+        phase='val'
+    )
+    print(len(dataset))
 
     for index in args.frame_idx:
         print(f'processing frame {index}')
         batch_data, filelist, _, timestamp = dataset[index]
-        imgs, img_metas, vox_label, grid, pt_label = batch_data
+        imgs, img_metas, vox_label, pt_coords, pt_label = batch_data
         imgs = torch.from_numpy(np.stack([imgs]).astype(np.float32)).to(device)
-        grid = torch.from_numpy(np.stack([grid]).astype(np.float32)).to(device)
+        pt_coords = torch.from_numpy(np.stack([pt_coords]).astype(np.float32)).to(device)
         with torch.no_grad():
-            outputs_vox, outputs_pts = my_model(img=imgs, img_metas=[img_metas], points=grid.clone())
+            outputs_vox, outputs_pts = my_model(img=imgs, img_metas=[img_metas], points=pt_coords.clone())
+            print(outputs_vox.shape)
+            print(outputs_pts.shape)
         
             predict_vox = torch.argmax(outputs_vox, dim=1) # bs, w, h, z
             predict_vox = predict_vox.squeeze(0).cpu().numpy() # w, h, z
@@ -298,7 +308,7 @@ if __name__ == "__main__":
         voxel_origin = dataset_config['min_volume_space']
         voxel_max = dataset_config['max_volume_space']
         grid_size = cfg.grid_size
-        resolution = [(e - s) / l for e, s, l in zip(voxel_max, voxel_origin, grid_size)]
+        resolution = np.array([(e - s) / l for e, s, l in zip(voxel_max, voxel_origin, grid_size)], dtype=np.float32)
 
         frame_dir = os.path.join(args.save_path, str(index))
         os.makedirs(frame_dir, exist_ok=True)
@@ -309,14 +319,14 @@ if __name__ == "__main__":
             else:
                 print(f"File {filename} does not exist")
 
-        draw(predict_vox,
+        fig = draw(predict_vox,
             predict_pts,
             voxel_origin,
             resolution,
-            grid.squeeze(0).cpu().numpy(),
+            pt_coords.squeeze(0).cpu().numpy(),
             pt_label.squeeze(-1),
-            frame_dir,
-            img_metas['cam_positions'],
-            img_metas['focal_positions'],
-            timestamp=timestamp)
+            raw_points=img_metas['raw_points'],
+            raw_labels=img_metas['raw_labels']
+            )
 
+        fig.show()
