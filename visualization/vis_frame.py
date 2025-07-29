@@ -4,9 +4,13 @@ import numpy as np
 import mmcv
 from mmcv import Config
 from collections import OrderedDict
+import pandas as pd
 
-import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
+import plotly.io as pio
+
+# pio.renderers.default = "notebook"
 
 
 def revise_ckpt(state_dict):
@@ -47,6 +51,7 @@ def draw(
     voxel_size=np.array([0.2, 0.2, 0.2], dtype=np.float32),  # voxel size in the real world
     pt_coords=None,       # voxel coordinates of point cloud
     pt_label=None,   # label of point cloud
+    label_name=None,
     raw_points=None,
     raw_labels=None,
 ):
@@ -83,36 +88,49 @@ def draw(
             [  0, 191, 255]   # ego car
         ]
     ).astype(np.uint8)
+    
+    # Helper: Convert RGB array to hex color string
+    def rgb_to_hex(rgb: np.ndarray) -> str:
+        """Convert an RGB array to a hex color string."""
+        return '#{:02x}{:02x}{:02x}'.format(*rgb)
+
+    # Build a mapping from label index to color string
+    label_to_color = {v: rgb_to_hex(colors[k]) for k, v in label_name.items()}
 
     # Create subplots
+    num_plots = 4 if (raw_points is not None and raw_labels is not None) else 3
     fig = make_subplots(
-        rows=1, cols=4,
-        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}, {'type': 'scatter3d'}, {'type': 'scatter3d'}]],
-        subplot_titles=("Occupancy", "Predicted Point Cloud", "Ground Truth Point Cloud", "Raw Point Cloud")
+        rows=1, cols=num_plots,
+        specs=[[{'type': 'scatter3d'}] * num_plots],
+        subplot_titles=("Occupancy", "Predicted Point Cloud", "Ground Truth Point Cloud", "Raw Point Cloud")[:num_plots]
     )
 
     # --- Occupancy Plot (Mode 0 equivalent) ---
     grid_coords_occ = np.vstack([grid_coords.T, voxels.reshape(-1)]).T
-    grid_coords_occ[grid_coords_occ[:, 3] == 1, 3] = 20  # Handle special case
+    # grid_coords_occ[grid_coords_occ[:, 3] == 1, 3] = 20  # Handle special case
 
-    fov_voxels_occ = grid_coords_occ[
-        (grid_coords_occ[:, 3] > 0) & (grid_coords_occ[:, 3] < 20)
-    ]
-    fov_voxels_occ_colors = colors[fov_voxels_occ[:, 3].astype(int) % len(colors)]
+    fov_voxels_occ = grid_coords_occ
+    # fov_voxels_occ = grid_coords_occ[
+    #     (grid_coords_occ[:, 3] > 0) & (grid_coords_occ[:, 3] < 20)
+    # ]
+    fov_voxels_occ = fov_voxels_occ[fov_voxels_occ[:, 3] != 0]
 
-    scatter_occ = go.Scatter3d(
-        x=fov_voxels_occ[:, 1], y=fov_voxels_occ[:, 0], z=fov_voxels_occ[:, 2],
-        mode='markers',
-        marker=dict(
-            size=3,
-            color=[f"rgb({r}, {g}, {b})" for r, g, b in fov_voxels_occ_colors],
-            colorscale='Viridis',
-            opacity=1.0,
-            colorbar=dict(title="Occupancy", x=0.28),  # Adjust colorbar position
-            line=dict(width=0)  # Remove white edges
-        )
+    occ_vox_dataframe = pd.DataFrame(fov_voxels_occ, columns=['x', 'y', 'z', 'label'])
+    occ_vox_dataframe['label'] = occ_vox_dataframe['label'].astype(int)
+    occ_vox_dataframe['label_name'] = occ_vox_dataframe['label'].map(label_name)
+
+    scatter_occ = px.scatter_3d(
+        occ_vox_dataframe,
+        x='x', y='y', z='z',
+        color='label_name',
+        color_discrete_map=label_to_color,
     )
-    fig.add_trace(scatter_occ, row=1, col=1)
+
+    for trace in scatter_occ.data:
+        trace.marker.symbol = "square"
+        trace.legendgroup = trace.name
+        trace.showlegend = False
+        fig.add_trace(trace, row=1, col=1)
 
     # --- Predicted Point Cloud Plot (Mode 1 equivalent) ---
     indexes = pt_coords[:, 0] * h * z + pt_coords[:, 1] * z + pt_coords[:, 2]
@@ -122,21 +140,23 @@ def draw(
     grid_coords_pred = np.vstack([grid_coords_pred.T, pred_pts.reshape(-1)]).T
 
     # Map predicted labels to colors
-    pred_colors = colors[grid_coords_pred[:, 3].astype(int) % len(colors)]  # Handle out-of-bound labels
+    grid_coords_pred = grid_coords_pred[grid_coords_pred[:, 3] != 0]
 
-    scatter_pred = go.Scatter3d(
-        x=grid_coords_pred[:, 1], y=grid_coords_pred[:, 0], z=grid_coords_pred[:, 2],
-        mode='markers',
-        marker=dict(
-            size=voxel_size.max() * 50, # Use voxel_size for cube size
-            color=[f"rgb({r}, {g}, {b})" for r, g, b in pred_colors],  # Use the mapped colors
-            opacity=1.0,
-            colorbar=dict(title="Predicted", x=0.64), # Adjust colorbar position
-            symbol='square',  # Change marker symbol to square (cube in 3D)
-            line=dict(width=0)  # Remove white edges
-        )
+    pred_vox_dataframe = pd.DataFrame(grid_coords_pred, columns=['x', 'y', 'z', 'label'])
+    pred_vox_dataframe['label'] = pred_vox_dataframe['label'].astype(int)
+    pred_vox_dataframe['label_name'] = pred_vox_dataframe['label'].map(label_name)
+    scatter_pred = px.scatter_3d(
+        pred_vox_dataframe,
+        x='x', y='y', z='z',
+        color='label_name',
+        color_discrete_map=label_to_color,
     )
-    fig.add_trace(scatter_pred, row=1, col=2)
+
+    for trace in scatter_pred.data:
+        trace.marker.symbol = "square"
+        trace.legendgroup = trace.name
+        trace.showlegend = False
+        fig.add_trace(trace, row=1, col=2)
 
     # --- Ground Truth Point Cloud Plot (Mode 2 equivalent) ---
     indexes = pt_coords[:, 0] * h * z + pt_coords[:, 1] * z + pt_coords[:, 2]
@@ -145,36 +165,39 @@ def draw(
     grid_coords_gt = grid_coords[indexes]
     grid_coords_gt = np.vstack([grid_coords_gt.T, gt_label.reshape(-1)]).T
 
-    # Map ground truth labels to colors
-    gt_colors = colors[grid_coords_gt[:, 3].astype(int) % len(colors)] # Handle out-of-bound labels
+    gt_vox_dataframe = pd.DataFrame(grid_coords_gt, columns=['x', 'y', 'z', 'label'])
+    gt_vox_dataframe['label'] = gt_vox_dataframe['label'].astype(int)
+    gt_vox_dataframe['label_name'] = gt_vox_dataframe['label'].map(label_name)
+    scatter_gt = px.scatter_3d(
+        gt_vox_dataframe,
+        x='x', y='y', z='z',
+        color='label_name',
+        color_discrete_map=label_to_color,
+    )
 
-    scatter_gt = go.Scatter3d(
-        x=grid_coords_gt[:, 1], y=grid_coords_gt[:, 0], z=grid_coords_gt[:, 2],
-        mode='markers',
-        marker=dict(
-            size=voxel_size.max() * 50,  #Use voxel_size for cube size
-            color=[f"rgb({r}, {g}, {b})" for r, g, b in gt_colors], # Use the mapped colors.
-            opacity=1.0,
-            colorbar=dict(title="Ground Truth", x=1.0),  # Adjust colorbar position
-            symbol='square', # Change marker symbol to square (cube in 3D)
-            line=dict(width=0)  # Remove white edges
-        )
-    )
-    fig.add_trace(scatter_gt, row=1, col=3)
+    for trace in scatter_gt.data:
+        trace.marker.symbol = "square"
+        trace.legendgroup = trace.name
+        trace.showlegend = False
+        fig.add_trace(trace, row=1, col=3)
+
     # --- Raw Point Cloud Plot (Mode 3 equivalent) ---
-    raw_colors = colors[raw_labels.astype(int).squeeze(-1) % len(colors)]
-    scatter_raw = go.Scatter3d(
-        x=raw_points[:, 0], y=raw_points[:, 1], z=raw_points[:, 2],
-        mode='markers',
-        marker=dict(
-            size=voxel_size.max() * 10,  # Reduced size multiplier for smaller dots
-            color=[f"rgb({r}, {g}, {b})" for r, g, b in raw_colors], # Use the mapped colors.
-            colorbar=dict(title="Raw", x=1.0),  # Adjust colorbar position
-            symbol='circle',
-            line=dict(width=0)  # Remove white edges
+    if raw_points is not None and raw_labels is not None:
+        raw_vox_dataframe = pd.DataFrame(raw_points, columns=['x', 'y', 'z'])
+        raw_vox_dataframe['label'] = raw_labels.astype(int).squeeze(-1)
+        raw_vox_dataframe['label_name'] = raw_vox_dataframe['label'].map(label_name)
+        scatter_raw = px.scatter_3d(
+            raw_vox_dataframe,
+            x='x', y='y', z='z',
+            color="label_name",
+            color_discrete_map=label_to_color,
         )
-    )
-    fig.add_trace(scatter_raw, row=1, col=4)
+
+        for trace in scatter_raw.data:
+            trace.marker.symbol = "circle"
+            trace.marker.size = 2
+            trace.legendgroup = trace.name
+            fig.add_trace(trace, row=1, col=4)
 
     # --- Layout Settings ---
     # Calculate axis ranges based on your data's extent
@@ -210,14 +233,12 @@ def draw(
                     yaxis=dict(range=range_val),
                     zaxis=dict(range=range_val),
                     aspectmode='cube'), # Important for equal aspect ratio
-        showlegend=False
     )
 
-    # fig.show()
     return fig
 
 
-if __name__ == "__main__":
+def main():
     import sys; sys.path.insert(0, os.path.abspath('.'))
 
     device = torch.device('cuda:0')
@@ -229,8 +250,8 @@ if __name__ == "__main__":
     parser.add_argument('--ckpt-path', type=str, default='out/tpv_occupancy/latest.pth')
     parser.add_argument('--vis-train', action='store_true', default=False)
     parser.add_argument('--save-path', type=str, default='out/tpv_occupancy/frames')
-    parser.add_argument('--frame-idx', type=int, default=0, nargs='+', 
-                        help='idx of frame to visualize, the idx corresponds to the order in pkl file.')
+    parser.add_argument('--frame-idx', type=int, default=[0], nargs='+',
+                        help='List of frame indices to visualize, corresponding to the order in pkl file.')
     # parser.add_argument('--mode', type=int, default=0, help='0: occupancy, 1: predicted point cloud, 2: gt point cloud') # Removed mode argument
     args = parser.parse_args()
     print(args)
@@ -248,14 +269,13 @@ if __name__ == "__main__":
         from builder import tpv_lidarseg_builder as model_builder
     my_model = model_builder.build(cfg.model).to(device)
     if args.ckpt_path:
-        ckpt = torch.load(args.ckpt_path, map_location='cpu')
+        ckpt = torch.load(args.ckpt_path, map_location='cpu', weights_only=False)
         if 'state_dict' in ckpt:
             ckpt = ckpt['state_dict']
         print(my_model.load_state_dict(revise_ckpt(ckpt)))
     my_model.eval()
 
     # prepare data
-    from nuscenes import NuScenes
     from visualization.dataset import ImagePoint_NuScenes_vis, DatasetWrapper_NuScenes_vis, ImagePoint_FLINK_vis
 
     if args.vis_train:
@@ -264,16 +284,17 @@ if __name__ == "__main__":
         pkl_path = 'data/nuscenes_infos_val.pkl'
     
     data_path = cfg.val_data_loader["data_path"]
-    label_mapping = dataset_config['label_mapping']
+    label_name = dataset_config["label_name"]
 
     if dataset_config["dataset_type"] == "ImagePoint_NuScenes":
+        from nuscenes import NuScenes
         nusc = NuScenes(version='v1.0-trainval', dataroot=data_path, verbose=True)
         pt_dataset = ImagePoint_NuScenes_vis(
             data_path, imageset=pkl_path,
-            label_mapping=label_mapping, nusc=nusc)
+            nusc=nusc)
     elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
         pt_dataset = ImagePoint_FLINK_vis(
-            data_path, label_mapping=label_mapping)
+            data_path, label_name=label_name)
     else:
         raise ValueError(f"Invalid dataset type: {dataset_config['dataset_type']}")
 
@@ -287,6 +308,7 @@ if __name__ == "__main__":
         phase='val'
     )
     print(len(dataset))
+    label_name = dataset_config["label_name"]
 
     for index in args.frame_idx:
         print(f'processing frame {index}')
@@ -325,8 +347,12 @@ if __name__ == "__main__":
             resolution,
             pt_coords.squeeze(0).cpu().numpy(),
             pt_label.squeeze(-1),
-            raw_points=img_metas['raw_points'],
-            raw_labels=img_metas['raw_labels']
+            label_name,
+            raw_points=img_metas['raw_points'] if 'raw_points' in img_metas else None,
+            raw_labels=img_metas['raw_labels'] if 'raw_labels' in img_metas else None
             )
 
         fig.show()
+
+if __name__ == "__main__":
+    main()

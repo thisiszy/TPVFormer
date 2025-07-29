@@ -6,29 +6,30 @@ _base_ = [
 dataset_params = dict(
     dataset_type = "ImagePoint_FLINK",
     version = "v1.0-trainval",
-    ignore_label = 0,
+    ignore_label = -1,
     fill_label = 0,
     fixed_volume_space = True,
-    label_mapping = "./config/label_mapping/flink.yaml",
     max_volume_space = [4.0, 4.0, 2.0],
     min_volume_space = [-4.0, -4.0, -2.0],
+    label_mapping = {0: 0, 1: 1, 2: 2},   # from dataset label to training label
+    label_name = {0: 'empty', 1: 'environment', 2: 'box'},  # training label to label name
 )
 
 train_data_loader = dict(
-    data_path = "data/flink/train",
+    data_path = "/home/zq5080/zhiyuan/blenderprocdata/fixed_camera_difficult",
     batch_size = 1,
     shuffle = True,
-    num_workers = 0,
+    num_workers = 10,
 )
 
 val_data_loader = dict(
-    data_path = "data/flink/val",
+    data_path = "/home/zq5080/zhiyuan/blenderprocdata/fixed_camera_difficult",
     batch_size = 1,
     shuffle = False,
-    num_workers = 0,
+    num_workers = 10,
 )
 
-unique_label = [0, 1, 2]
+unique_label = [1, 2]
 
 
 occupancy = True
@@ -41,7 +42,7 @@ _dim_ = 256
 _pos_dim_ = _dim_//2
 _ffn_dim_ = _dim_*2
 _num_levels_ = 4
-_num_cams_ = 6
+_num_cams_ = 3
 tpv_h_ = 50
 tpv_w_ = 50
 tpv_z_ = 50
@@ -51,7 +52,7 @@ scale_z = 1
 grid_size = [tpv_h_*scale_h, tpv_w_*scale_w, tpv_z_*scale_z]
 num_points_in_pillar = [4, 32, 32]
 num_points = [8, 64, 64]
-nbr_class = 3
+nbr_class = len(dataset_params['label_name'])
 
 model = dict(
     type='TPVFormer',
@@ -120,6 +121,7 @@ model = dict(
                         num_levels=1),
                     dict(
                         type='TPVImageCrossAttention',
+                        num_cams=_num_cams_,
                         pc_range=point_cloud_range,
                         deformable_attention=dict(
                             type='TPVMSDeformableAttention3D',

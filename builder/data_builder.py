@@ -1,7 +1,6 @@
 import torch
 from dataloader.dataset import ImagePoint_NuScenes, ImagePoint_FLINK
 from dataloader.dataset_wrapper import custom_collate_fn, DatasetWrapper_NuScenes
-from nuscenes import NuScenes
 
 
 def build(dataset_config,
@@ -13,10 +12,12 @@ def build(dataset_config,
           scale_rate=1,
     ):
     if dataset_config["dataset_type"] == "ImagePoint_NuScenes":
+        from nuscenes import NuScenes
         data_path = train_dataloader_config["data_path"]
         train_imageset = train_dataloader_config["imageset"]
         val_imageset = val_dataloader_config["imageset"]
         label_mapping = dataset_config["label_mapping"]
+        label_name = dataset_config["label_name"]
 
         nusc = NuScenes(version=version, dataroot=data_path, verbose=True)
         train_dataset = ImagePoint_NuScenes(data_path, imageset=train_imageset,
@@ -25,11 +26,12 @@ def build(dataset_config,
                                     label_mapping=label_mapping, nusc=nusc)
     elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
         label_mapping = dataset_config["label_mapping"]
+        label_name = dataset_config["label_name"]
         train_data_path = train_dataloader_config["data_path"]
         val_data_path = val_dataloader_config["data_path"]
 
-        train_dataset = ImagePoint_FLINK(train_data_path, label_mapping=label_mapping)
-        val_dataset = ImagePoint_FLINK(val_data_path, label_mapping=label_mapping)
+        train_dataset = ImagePoint_FLINK(train_data_path, label_mapping=label_mapping, label_name=label_name)
+        val_dataset = ImagePoint_FLINK(val_data_path, label_mapping=label_mapping, label_name=label_name)
     else:
         raise ValueError(f"Invalid dataset type: {dataset_config['dataset_type']}")
 

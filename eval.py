@@ -5,7 +5,7 @@ import torch.distributed as dist
 
 from utils.metric_util import MeanIoU
 from utils.load_save_util import revise_ckpt
-from dataloader.dataset import get_nuScenes_label_name
+from dataloader.dataset import label_mapping
 from builder import loss_builder
 
 from mmcv import Config
@@ -80,7 +80,7 @@ def main(local_rank, args):
     print('done ddp model')
 
     # generate datasets
-    SemKITTI_label_name = get_nuScenes_label_name(dataset_config["label_mapping"])
+    SemKITTI_label_name = label_mapping(dataset_config["label_mapping"])
     unique_label = np.asarray(cfg.unique_label)
     unique_label_str = [SemKITTI_label_name[x] for x in unique_label]
 

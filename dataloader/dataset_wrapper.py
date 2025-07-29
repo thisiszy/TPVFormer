@@ -82,7 +82,7 @@ class DatasetWrapper_NuScenes(data.Dataset):
         # TODO: grid_ind_float should actually be returned.
         # grid_ind_float = (np.clip(xyz, min_bound, max_bound - 1e-3) - min_bound) / intervals
         grid_ind_float = (np.clip(xyz, min_bound, max_bound) - min_bound) / intervals
-        grid_ind = np.floor(grid_ind_float).astype(np.int)
+        grid_ind = np.floor(grid_ind_float).astype(np.int64)
 
         # process labels
         processed_label = np.ones(self.grid_size, dtype=np.uint8) * self.fill_label
@@ -116,10 +116,10 @@ def nb_process_label(processed_label, sorted_label_voxel_pair):
 def custom_collate_fn(data):
     img2stack = np.stack([d[0] for d in data]).astype(np.float32)
     meta2stack = [d[1] for d in data]
-    label2stack = np.stack([d[2] for d in data]).astype(np.int)
+    label2stack = np.stack([d[2] for d in data]).astype(np.int64)
     # because we use a batch size of 1, so we can stack these tensor together.
-    grid_ind_stack = np.stack([d[3] for d in data]).astype(np.float)
-    point_label = np.stack([d[4] for d in data]).astype(np.int)
+    grid_ind_stack = np.stack([d[3] for d in data]).astype(np.float64)
+    point_label = np.stack([d[4] for d in data]).astype(np.int64)
     return torch.from_numpy(img2stack), \
         meta2stack, \
         torch.from_numpy(label2stack), \

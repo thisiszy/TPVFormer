@@ -3,7 +3,7 @@ import copy
 import warnings
 
 import torch
-from mmcv import ConfigDict
+from mmcv.utils.config import ConfigDict
 from mmcv.cnn import build_norm_layer
 from mmcv.runner.base_module import BaseModule, ModuleList
 from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER

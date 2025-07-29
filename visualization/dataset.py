@@ -8,9 +8,8 @@ import pickle
 from mmcv.image.io import imread
 from copy import deepcopy
 from typing import Dict, List, Tuple, Any
-import random
+import hashlib
 
-import torch
 import numba as nb
 from torch.utils import data
 import numpy as np
@@ -19,7 +18,7 @@ from alive_progress import alive_bar
 from dataloader.transform_3d import PadMultiViewImage, \
     NormalizeMultiviewImage, \
     PhotoMetricDistortionMultiViewImage
-from dataloader.flink_dataset_loader import FlinkDatasetLoader, FlinkDatapoint, MetadataDetails
+from flink_dataset import FlinkDatasetLoader, FlinkDatapoint
 
 img_norm_cfg = dict(
     mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
@@ -35,19 +34,22 @@ test_pipeline = [
     dict(type='PadMultiViewImage', size_divisor=32),
 ]
 
+def get_hash(paths: List[Path]) -> str:
+    """Generates a single SHA256 hash for a list of file or directory paths by combining their sizes and paths."""
+    size = sum(p.stat().st_size for p in paths if p.exists())  # sizes
+    h = hashlib.sha256(str(size).encode())  # hash sizes
+    h.update("".join([p.as_posix() for p in paths]).encode())  # hash paths
+    return h.hexdigest()  # return hash
+
 
 class ImagePoint_NuScenes_vis(data.Dataset):
     def __init__(self, data_path, imageset='train', 
                  scene_idx=None, scene_name=None,
-                 label_mapping="nuscenes.yaml", nusc=None):
+                 nusc=None):
         self.return_ref = False
 
         with open(imageset, 'rb') as f:
             data = pickle.load(f)
-
-        with open(label_mapping, 'r') as stream:
-            nuscenesyaml = yaml.safe_load(stream)
-        self.learning_map = nuscenesyaml['learning_map']
 
         nusc_infos = data['infos']
 
@@ -211,70 +213,47 @@ class ImagePoint_NuScenes_vis(data.Dataset):
         return input_dict
     
 class ImagePoint_FLINK_vis(data.Dataset):
-    CATEGORY_STR_TO_ID = {
-        "box": 2,
-        "environment": 1,
-    }
     """
     Dataset class for loading Flink data.
 
     Args:
         data_path (str): Path to the root directory of the Flink dataset.
-        label_mapping (str, optional):  Not used in this implementation, kept for consistency.
         len_dataset (int, optional): Length of the dataset. Defaults to None.
         img_num (int, optional): Number of images to sample. Defaults to 6.
         device (torch.device, optional): Device to load the data on. Defaults to 'cuda'.
     """
-    def __init__(self, data_path: str, label_mapping: str = "nuscenes.yaml", len_dataset: int | None = None, img_num: int = 6):
+    def __init__(self, data_path: str, 
+        label_mapping: dict[int, int] = {},
+        label_name: dict[int, str] = {},img_num: int = 6, cache: bool = True):
         self.data_path: Path = Path(data_path)
-        self.label_mapping: str = label_mapping  # Not used, but kept for API consistency
+        self.label_mapping: dict[int, int] = label_mapping
+        self.name_label: dict[str, int] = {v: k for k, v in label_name.items()}
         self.img_num: int = img_num
         self.dataset_loaders: list[tuple[str, FlinkDatasetLoader]] = []
 
-        REQUIRED_FOLDERS = {'depth', 'images', 'labels', 'metadata'}
-
-        valid_dataset_paths: List[Path] = []
-        def check_directory(dir_path: Path):
-            # Check if this directory contains any of the required folders
-            if any((dir_path / folder).exists() for folder in REQUIRED_FOLDERS):
-                valid_dataset_paths.append(dir_path)
-                self.dataset_loaders.append((dir_path, None))
-                return
-            # Recursively check subdirectories
-            for item in dir_path.iterdir():
-                if item.is_dir():
-                    check_directory(item)
-        check_directory(self.data_path)
-        with alive_bar(len(valid_dataset_paths), title="Loading dataset") as bar:
-            for i, dataset_path in enumerate(valid_dataset_paths):
-                self.dataset_loaders[i] = (dataset_path, FlinkDatasetLoader(dataset_path))
-                bar()
+        cache_path = Path("vis_cache.pkl")
+        if cache and cache_path.exists():
+            with open(cache_path, "rb") as f:
+                _cache = pickle.load(f)
+                self.dataset_loaders = _cache["dataset_loaders"]
+        if not self.dataset_loaders:
+            self.dataset_loaders = FlinkDatasetLoader.from_path([self.data_path])
+            if cache:
+                with open(cache_path, "wb") as f:
+                    pickle.dump(
+                        {
+                            "dataset_loaders": self.dataset_loaders,
+                        },
+                        f,
+                    )
         
-        # self.len_dataset = 10000
-        if len_dataset is not None:
-            self.len_dataset = len_dataset
-        else:
-            self.len_dataset = sum(len(loader) for _, loader in self.dataset_loaders)
+        self.len_dataset = len(self.dataset_loaders)
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
         return self.len_dataset
     
-    def get_datapoint(self, dataset_idx:int, camera_idxs:List[int]) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
-        _, selected_dataset = self.dataset_loaders[dataset_idx]
-        selected_datapoints: List[FlinkDatapoint] = [selected_dataset[i] for i in camera_idxs]
-
-        def metadata_to_posematrix(metadata: MetadataDetails) -> np.ndarray:
-            rotation: np.ndarray = np.array(metadata.rotation)
-            position: np.ndarray = np.array(metadata.position)
-            # Create 4x4 transformation matrix
-            # Convert exponential coordinates (axis-angle) to rotation matrix
-            R = Rotation.from_rotvec(rotation).as_matrix()
-            T = np.eye(4)
-            T[:3, :3] = R
-            T[:3, 3] = position
-            return T
-
+    def get_datapoint(self, selected_datapoints: List[FlinkDatapoint]) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
         imgs: List[np.ndarray] = []
         lidar2imgs: List[np.ndarray] = []
         cam_positions: List[np.ndarray] = []
@@ -285,7 +264,7 @@ class ImagePoint_FLINK_vis(data.Dataset):
 
         for datapoint in selected_datapoints:
             # assume world center is the lidar
-            cam2lidar: np.ndarray = metadata_to_posematrix(datapoint.metadata.metadata)
+            cam2lidar: np.ndarray = datapoint.metadata.metadata.get_world2cam()
             lidar2cam: np.ndarray = np.linalg.inv(cam2lidar)
             viewpad = np.eye(4)
             viewpad[:3, :3] = datapoint.metadata.metadata.camera_matrix
@@ -295,21 +274,20 @@ class ImagePoint_FLINK_vis(data.Dataset):
             f = viewpad[0, 0]
             focal_positions.append((lidar2cam @ np.array([0., 0., f, 1.]).reshape([4, 1])).flatten()[:3])
             imgs.append(datapoint.get_image().astype(np.float32))
-            
-            depth = datapoint.get_depth()
-            
-            points, valid_points = self._depth_to_pointcloud(depth, np.array(datapoint.metadata.metadata.camera_matrix), cam2lidar)
-            labels = np.ones((depth.shape[0], depth.shape[1]), dtype=np.uint8)
+
+            img_h, img_w = datapoint.depth_size
+            points, valid_points = datapoint.get_pointcloud()
+            labels = np.ones((img_h, img_w), dtype=np.uint8)
             for segment in datapoint.label_data.segmentations:
                 bbox = segment.bbox
-                mask = ImagePoint_FLINK_vis._rle_to_mask(segment.mask, (bbox[2], bbox[3]))
+                mask = segment.get_mask()
                 if bbox is not None and mask is not None:
                     # Extract bbox coordinates
                     x, y, w, h = bbox
                     # Create mask array within bbox
                     mask_array = np.array(mask).reshape(h, w)
                     # Fill the bbox region with mask values
-                    labels[y:y+h, x:x+w][mask_array == 1] = self.CATEGORY_STR_TO_ID[segment.category_id]
+                    labels[y:y+h, x:x+w][mask_array == 1] = self.name_label[segment.category_id]
             labels = labels.reshape(-1, 1)
 
             points = points[valid_points]
@@ -321,8 +299,8 @@ class ImagePoint_FLINK_vis(data.Dataset):
         combined_labels: np.ndarray = np.concatenate(all_labels, axis=0)
             
         # Randomly sample points if we have more than that
-        if len(combined_points) > 200000:
-            sample_indices = np.random.choice(len(combined_points), 200000, replace=False)
+        if len(combined_points) > 10000:
+            sample_indices = np.random.choice(len(combined_points), 10000, replace=False)
             combined_points = combined_points[sample_indices]
             combined_labels = combined_labels[sample_indices]
 
@@ -350,73 +328,65 @@ class ImagePoint_FLINK_vis(data.Dataset):
                 - np.ndarray:  The combined point cloud data (x, y, z coordinates).
                 - np.ndarray:  The point cloud labels (all ones).
         """
-        # sample a dataset from the dataset_loaders
-        selected_dataset_idx = random.randint(0, len(self.dataset_loaders)-1)
-        selected_dataset_path, selected_dataset = self.dataset_loaders[selected_dataset_idx]
-        if selected_dataset is None:
-            selected_dataset = FlinkDatasetLoader(selected_dataset_path)
-            self.dataset_loaders[selected_dataset_idx] = (selected_dataset_path, selected_dataset)
-        # sample img_num images from the selected dataset
-        datapoint_indices: List[int] = random.sample(range(len(selected_dataset)), self.img_num)
-        return self.get_datapoint(selected_dataset_idx, datapoint_indices)
+        return self.get_datapoint(self.dataset_loaders[index].datapoints)
     
-    @staticmethod
-    def _rle_to_mask(rle: List[int], shape: Tuple[int, int]) -> np.ndarray:
-        """Convert RLE to binary mask."""
-        mask = np.zeros(shape[0] * shape[1], dtype=np.uint8)
-        current = 0
-        for i in range(0, len(rle), 2):
-            length = rle[i]
-            data = rle[i + 1]
-            start = current
-            mask[start:start + length] = data
-            current = start + length
-        return mask.reshape(shape)
+    # @staticmethod
+    # def _rle_to_mask(rle: List[int], shape: Tuple[int, int]) -> np.ndarray:
+    #     """Convert RLE to binary mask."""
+    #     mask = np.zeros(shape[0] * shape[1], dtype=np.uint8)
+    #     current = 0
+    #     for i in range(0, len(rle), 2):
+    #         length = rle[i]
+    #         data = rle[i + 1]
+    #         start = current
+    #         mask[start:start + length] = data
+    #         current = start + length
+    #     return mask.reshape(shape)
 
-    def _depth_to_pointcloud(self, depth_image: np.ndarray, camera_matrix: np.ndarray, world2cam: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Convert a depth image to a point cloud in world coordinates.
+    # def _depth_to_pointcloud(self, depth_image: np.ndarray, camera_matrix: np.ndarray, world2cam: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    #     """
+    #     Convert a depth image to a point cloud in world coordinates.
 
-        Args:
-            depth_image (np.ndarray): Depth image (in millimeters).
-            camera_matrix (np.ndarray): 3x3 camera intrinsic matrix.
-            world2cam (np.ndarray): 4x4 transformation matrix from world to camera coordinates.
+    #     Args:
+    #         depth_image (np.ndarray): Depth image (in millimeters).
+    #         camera_matrix (np.ndarray): 3x3 camera intrinsic matrix.
+    #         world2cam (np.ndarray): 4x4 transformation matrix from world to camera coordinates.
 
-        Returns:
-            Tuple[np.ndarray, np.ndarray]: Tuple containing:
-                - Point cloud data (Nx3 array of x, y, z coordinates).
-                - Valid points mask (N,) array.
-        """
-        height, width = depth_image.shape[:2]
-        fx: float = camera_matrix[0, 0]
-        fy: float = camera_matrix[1, 1]
-        cx: float = camera_matrix[0, 2]
-        cy: float = camera_matrix[1, 2]
+    #     Returns:
+    #         Tuple[np.ndarray, np.ndarray]: Tuple containing:
+    #             - Point cloud data (Nx3 array of x, y, z coordinates).
+    #             - Valid points mask (N,) array.
+    #     """
+    #     height, width = depth_image.shape[:2]
+    #     fx: float = camera_matrix[0, 0]
+    #     fy: float = camera_matrix[1, 1]
+    #     cx: float = camera_matrix[0, 2]
+    #     cy: float = camera_matrix[1, 2]
 
-        # Create meshgrid of pixel coordinates
-        v, u = np.meshgrid(np.arange(width), np.arange(height))
+    #     # Create meshgrid of pixel coordinates
+    #     v, u = np.meshgrid(np.arange(width), np.arange(height))
         
-        # Convert depth to meters
-        depth = (depth_image / 1000.0)
+    #     # Convert depth to meters
+    #     depth = (depth_image / 1000.0)
         
-        # Calculate x,y,z coordinates
-        x = (v - cx) * depth / fx
-        y = (u - cy) * depth / fy
-        z = depth
+    #     # Calculate x,y,z coordinates
+    #     x = (v - cx) * depth / fx
+    #     y = (u - cy) * depth / fy
+    #     z = depth
         
-        # Stack coordinates
-        points = np.stack([x, y, z], axis=-1)
+    #     # Stack coordinates
+    #     points = np.stack([x, y, z], axis=-1)
         
-        # Reshape to (N,3)
-        points = points.reshape(-1, 3)
+    #     # Reshape to (N,3)
+    #     points = points.reshape(-1, 3)
         
-        # Filter out invalid points
-        valid_points = depth.reshape(-1) > 1e-5
+    #     # Filter out invalid points
+    #     valid_points = depth.reshape(-1) > 1e-5
         
-        # Transform to world coordinates
-        points = (world2cam[:3, :3] @ points.T).T + world2cam[:3, 3]
+    #     # Transform to world coordinates
+    #     points = (world2cam[:3, :3] @ points.T).T + world2cam[:3, 3]
         
-        return points.astype(np.float32), valid_points
+    #     return points.astype(np.float32), valid_points
 
 class DatasetWrapper_NuScenes_vis(data.Dataset):
     def __init__(self, in_dataset, grid_size, ignore_label=0, fixed_volume_space=False, 
@@ -470,7 +440,7 @@ class DatasetWrapper_NuScenes_vis(data.Dataset):
 
         if (intervals == 0).any(): print("Zero interval!")
         # TODO: grid_ind of float dtype may be better.
-        grid_ind = (np.floor((np.clip(xyz_pol, min_bound, max_bound) - min_bound) / intervals)).astype(np.int)
+        grid_ind = (np.floor((np.clip(xyz_pol, min_bound, max_bound) - min_bound) / intervals)).astype(np.int64)
 
         # process labels
         processed_label = np.ones(self.grid_size, dtype=np.uint8) * self.ignore_label
