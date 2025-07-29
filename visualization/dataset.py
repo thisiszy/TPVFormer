@@ -1,4 +1,3 @@
-
 import os
 import numpy as np
 from pathlib import Path
@@ -15,24 +14,26 @@ from torch.utils import data
 import numpy as np
 from scipy.spatial.transform import Rotation
 from alive_progress import alive_bar
-from dataloader.transform_3d import PadMultiViewImage, \
-    NormalizeMultiviewImage, \
-    PhotoMetricDistortionMultiViewImage
+from dataloader.transform_3d import (
+    PadMultiViewImage,
+    NormalizeMultiviewImage,
+    PhotoMetricDistortionMultiViewImage,
+)
 from flink_dataset import FlinkDatasetLoader, FlinkDatapoint
 
-img_norm_cfg = dict(
-    mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
+img_norm_cfg = dict(mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False)
 
 train_pipeline = [
-    dict(type='PhotoMetricDistortionMultiViewImage'),
-    dict(type='NormalizeMultiviewImage', **img_norm_cfg),
-    dict(type='PadMultiViewImage', size_divisor=32),
+    dict(type="PhotoMetricDistortionMultiViewImage"),
+    dict(type="NormalizeMultiviewImage", **img_norm_cfg),
+    dict(type="PadMultiViewImage", size_divisor=32),
 ]
 
 test_pipeline = [
-    dict(type='NormalizeMultiviewImage', **img_norm_cfg),
-    dict(type='PadMultiViewImage', size_divisor=32),
+    dict(type="NormalizeMultiviewImage", **img_norm_cfg),
+    dict(type="PadMultiViewImage", size_divisor=32),
 ]
+
 
 def get_hash(paths: List[Path]) -> str:
     """Generates a single SHA256 hash for a list of file or directory paths by combining their sizes and paths."""
@@ -43,104 +44,125 @@ def get_hash(paths: List[Path]) -> str:
 
 
 class ImagePoint_NuScenes_vis(data.Dataset):
-    def __init__(self, data_path, imageset='train', 
-                 scene_idx=None, scene_name=None,
-                 nusc=None):
+    def __init__(
+        self, data_path, imageset="train", scene_idx=None, scene_name=None, nusc=None
+    ):
         self.return_ref = False
 
-        with open(imageset, 'rb') as f:
+        with open(imageset, "rb") as f:
             data = pickle.load(f)
 
-        nusc_infos = data['infos']
+        nusc_infos = data["infos"]
 
         # insert sweep frames between keyframes
         if scene_idx is not None or scene_name is not None:
-            scene_name = list(nusc_infos.keys())[scene_idx] if scene_name is None else scene_name
-            print(f'visualizing {scene_name}')
+            scene_name = (
+                list(nusc_infos.keys())[scene_idx] if scene_name is None else scene_name
+            )
+            print(f"visualizing {scene_name}")
             self.nusc_infos = nusc_infos[scene_name]
             nusc_infos = deepcopy(self.nusc_infos)
 
             sweep_cams = []
             sweep_tss = []
             reverse_tab = {
-                'CAM_FRONT':0, 
-                'CAM_FRONT_RIGHT':1, 
-                'CAM_FRONT_LEFT':2, 
-                'CAM_BACK':3, 
-                'CAM_BACK_LEFT':4, 
-                'CAM_BACK_RIGHT':5
+                "CAM_FRONT": 0,
+                "CAM_FRONT_RIGHT": 1,
+                "CAM_FRONT_LEFT": 2,
+                "CAM_BACK": 3,
+                "CAM_BACK_LEFT": 4,
+                "CAM_BACK_RIGHT": 5,
             }
-            for cam_type in ['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT', 'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT']:
-                dir = os.path.join(data_path, 'sweeps', cam_type)
+            for cam_type in [
+                "CAM_FRONT",
+                "CAM_FRONT_RIGHT",
+                "CAM_FRONT_LEFT",
+                "CAM_BACK",
+                "CAM_BACK_LEFT",
+                "CAM_BACK_RIGHT",
+            ]:
+                dir = os.path.join(data_path, "sweeps", cam_type)
                 filenames = os.listdir(dir)
                 files = [os.path.join(dir, fn) for fn in filenames]
-                ts = [int(fn.split('__')[-1].split('.')[0]) for fn in filenames]
+                ts = [int(fn.split("__")[-1].split(".")[0]) for fn in filenames]
                 idx = np.argsort(ts)
                 sweep_cams.append(np.array(files)[idx])
                 sweep_tss.append(np.array(ts)[idx])
             sweep_cams = np.array(sweep_cams)
             sweep_tss = np.array(sweep_tss)
 
-            for i in range(len(self.nusc_infos)-1):
+            for i in range(len(self.nusc_infos) - 1):
                 insert_items = []
-                start_ts = self.nusc_infos[i]['timestamp']
-                end_ts = self.nusc_infos[i+1]['timestamp']
+                start_ts = self.nusc_infos[i]["timestamp"]
+                end_ts = self.nusc_infos[i + 1]["timestamp"]
                 temp_cams = []
                 for sweep_cam, sweep_ts in zip(sweep_cams, sweep_tss):
-                    temp_cam = sweep_cam[[(ts < end_ts and ts > start_ts) for ts in sweep_ts]]
+                    temp_cam = sweep_cam[
+                        [(ts < end_ts and ts > start_ts) for ts in sweep_ts]
+                    ]
                     temp_cams.append(temp_cam.tolist())
                 min_len = min([len(temp_cam) for temp_cam in temp_cams])
                 temp_cams = [temp_cam[:min_len] for temp_cam in temp_cams]
                 for j in range(min_len):
                     temp_dict = deepcopy(self.nusc_infos[i])
-                    for cam_type, cam_info in temp_dict['cams'].items():
-                        cam_info['data_path'] = temp_cams[reverse_tab[cam_type]][j]
-                    temp_dict['timestamp'] = temp_cams[0][j].split('__')[-1].split('.')[0]
+                    for cam_type, cam_info in temp_dict["cams"].items():
+                        cam_info["data_path"] = temp_cams[reverse_tab[cam_type]][j]
+                    temp_dict["timestamp"] = (
+                        temp_cams[0][j].split("__")[-1].split(".")[0]
+                    )
                     insert_items.append(temp_dict)
                 nusc_infos.extend(insert_items)
-        
+
         self.nusc_infos = nusc_infos
-        
+
         self.data_path = data_path
         self.lidarseg_path = data_path
         self.nusc = nusc
-        self.cam_names = ['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT', 'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT']
-        
+        self.cam_names = [
+            "CAM_FRONT",
+            "CAM_FRONT_RIGHT",
+            "CAM_FRONT_LEFT",
+            "CAM_BACK",
+            "CAM_BACK_LEFT",
+            "CAM_BACK_RIGHT",
+        ]
+
     def __len__(self):
-        'Denotes the total number of samples'
+        "Denotes the total number of samples"
         return len(self.nusc_infos)
 
     def __getitem__(self, index):
         info = self.nusc_infos[index]
         imgs_info = self.get_data_info(info)
         img_metas = {
-            'lidar2img': imgs_info['lidar2img'],
-            'cam_positions': imgs_info['cam_positions'],
-            'focal_positions': imgs_info['focal_positions']
+            "lidar2img": imgs_info["lidar2img"],
+            "cam_positions": imgs_info["cam_positions"],
+            "focal_positions": imgs_info["focal_positions"],
         }
         # read 6 cams
         imgs = []
-        for filename in imgs_info['img_filename']:
-            imgs.append(
-                imread(filename, 'unchanged').astype(np.float32)
-            )
-        
-        lidar_sd_token = self.nusc.get('sample', info['token'])['data']['LIDAR_TOP']
-        lidarseg_labels_filename = os.path.join(self.lidarseg_path, self.nusc.get('lidarseg', lidar_sd_token)['filename'])
-        points_label = np.fromfile(lidarseg_labels_filename, dtype=np.uint8).reshape([-1, 1])
+        for filename in imgs_info["img_filename"]:
+            imgs.append(imread(filename, "unchanged").astype(np.float32))
+
+        lidar_sd_token = self.nusc.get("sample", info["token"])["data"]["LIDAR_TOP"]
+        lidarseg_labels_filename = os.path.join(
+            self.lidarseg_path, self.nusc.get("lidarseg", lidar_sd_token)["filename"]
+        )
+        points_label = np.fromfile(lidarseg_labels_filename, dtype=np.uint8).reshape(
+            [-1, 1]
+        )
         points_label = np.vectorize(self.learning_map.__getitem__)(points_label)
-        
-        lidar_path = info['lidar_path']
+
+        lidar_path = info["lidar_path"]
         points = np.fromfile(lidar_path, dtype=np.float32, count=-1).reshape([-1, 5])
 
         data_tuple = (imgs, img_metas, points[:, :3], points_label.astype(np.uint8))
 
         # deal with scene
-        scene_token = self.nusc.get('sample', info['token'])['scene_token']
-        scene_meta = self.nusc.get('scene', scene_token)
-        timestamp = info['timestamp']
-        return data_tuple, imgs_info['img_filename'], scene_meta, timestamp
-    
+        scene_token = self.nusc.get("sample", info["token"])["scene_token"]
+        scene_meta = self.nusc.get("scene", scene_token)
+        timestamp = info["timestamp"]
+        return data_tuple, imgs_info["img_filename"], scene_meta, timestamp
 
     def get_data_info(self, info):
         """Get data info according to the given index.
@@ -164,11 +186,11 @@ class ImagePoint_NuScenes_vis(data.Dataset):
         # standard protocal modified from SECOND.Pytorch
         f = 0.0055
         input_dict = dict(
-            sample_idx=info['token'],
-            pts_filename=info['lidar_path'],
-            sweeps=info['sweeps'],
-            ego2global_translation=info['ego2global_translation'],
-            ego2global_rotation=info['ego2global_rotation'],
+            sample_idx=info["token"],
+            pts_filename=info["lidar_path"],
+            sweeps=info["sweeps"],
+            ego2global_translation=info["ego2global_translation"],
+            ego2global_rotation=info["ego2global_rotation"],
         )
 
         image_paths = []
@@ -177,27 +199,30 @@ class ImagePoint_NuScenes_vis(data.Dataset):
         cam_intrinsics = []
         cam_positions = []
         focal_positions = []
-        for cam_type, cam_info in info['cams'].items():
-            image_paths.append(cam_info['data_path'])
+        for cam_type, cam_info in info["cams"].items():
+            image_paths.append(cam_info["data_path"])
             # obtain lidar to image transformation matrix
-            lidar2cam_r = np.linalg.inv(cam_info['sensor2lidar_rotation'])
-            lidar2cam_t = cam_info[
-                'sensor2lidar_translation'] @ lidar2cam_r.T
+            lidar2cam_r = np.linalg.inv(cam_info["sensor2lidar_rotation"])
+            lidar2cam_t = cam_info["sensor2lidar_translation"] @ lidar2cam_r.T
             lidar2cam_rt = np.eye(4)
             lidar2cam_rt[:3, :3] = lidar2cam_r.T
             lidar2cam_rt[3, :3] = -lidar2cam_t
-            intrinsic = cam_info['cam_intrinsic']
+            intrinsic = cam_info["cam_intrinsic"]
             viewpad = np.eye(4)
-            viewpad[:intrinsic.shape[0], :intrinsic.shape[1]] = intrinsic
-            lidar2img_rt = (viewpad @ lidar2cam_rt.T)
+            viewpad[: intrinsic.shape[0], : intrinsic.shape[1]] = intrinsic
+            lidar2img_rt = viewpad @ lidar2cam_rt.T
             lidar2img_rts.append(lidar2img_rt)
 
             cam_intrinsics.append(viewpad)
             lidar2cam_rts.append(lidar2cam_rt.T)
 
-            cam_position = np.linalg.inv(lidar2cam_rt.T) @ np.array([0., 0., 0., 1.]).reshape([4, 1])
+            cam_position = np.linalg.inv(lidar2cam_rt.T) @ np.array(
+                [0.0, 0.0, 0.0, 1.0]
+            ).reshape([4, 1])
             cam_positions.append(cam_position.flatten()[:3])
-            focal_position = np.linalg.inv(lidar2cam_rt.T) @ np.array([0., 0., f, 1.]).reshape([4, 1])
+            focal_position = np.linalg.inv(lidar2cam_rt.T) @ np.array(
+                [0.0, 0.0, f, 1.0]
+            ).reshape([4, 1])
             focal_positions.append(focal_position.flatten()[:3])
 
         input_dict.update(
@@ -206,12 +231,14 @@ class ImagePoint_NuScenes_vis(data.Dataset):
                 lidar2img=lidar2img_rts,
                 cam_intrinsic=cam_intrinsics,
                 lidar2cam=lidar2cam_rts,
-                cam_positions=cam_positions, # w, h, z, meters,
-                focal_positions=focal_positions
-            ))
+                cam_positions=cam_positions,  # w, h, z, meters,
+                focal_positions=focal_positions,
+            )
+        )
 
         return input_dict
-    
+
+
 class ImagePoint_FLINK_vis(data.Dataset):
     """
     Dataset class for loading Flink data.
@@ -222,9 +249,15 @@ class ImagePoint_FLINK_vis(data.Dataset):
         img_num (int, optional): Number of images to sample. Defaults to 6.
         device (torch.device, optional): Device to load the data on. Defaults to 'cuda'.
     """
-    def __init__(self, data_path: str, 
+
+    def __init__(
+        self,
+        data_path: str,
         label_mapping: dict[int, int] = {},
-        label_name: dict[int, str] = {},img_num: int = 6, cache: bool = True):
+        label_name: dict[int, str] = {},
+        img_num: int = 6,
+        cache: bool = True,
+    ):
         self.data_path: Path = Path(data_path)
         self.label_mapping: dict[int, int] = label_mapping
         self.name_label: dict[str, int] = {v: k for k, v in label_name.items()}
@@ -246,19 +279,21 @@ class ImagePoint_FLINK_vis(data.Dataset):
                         },
                         f,
                     )
-        
+
         self.len_dataset = len(self.dataset_loaders)
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
         return self.len_dataset
-    
-    def get_datapoint(self, selected_datapoints: List[FlinkDatapoint]) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
+
+    def get_datapoint(
+        self, selected_datapoints: List[FlinkDatapoint]
+    ) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
         imgs: List[np.ndarray] = []
         lidar2imgs: List[np.ndarray] = []
         cam_positions: List[np.ndarray] = []
         focal_positions: List[np.ndarray] = []
-        
+
         all_points: List[np.ndarray] = []
         all_labels: List[np.ndarray] = []
 
@@ -268,11 +303,17 @@ class ImagePoint_FLINK_vis(data.Dataset):
             lidar2cam: np.ndarray = np.linalg.inv(cam2lidar)
             viewpad = np.eye(4)
             viewpad[:3, :3] = datapoint.metadata.metadata.camera_matrix
-            lidar2img = (viewpad @ lidar2cam)
+            lidar2img = viewpad @ lidar2cam
             lidar2imgs.append(lidar2img)
-            cam_positions.append((cam2lidar @ np.array([0., 0., 0., 1.]).reshape([4, 1])).flatten()[:3])
+            cam_positions.append(
+                (cam2lidar @ np.array([0.0, 0.0, 0.0, 1.0]).reshape([4, 1])).flatten()[
+                    :3
+                ]
+            )
             f = viewpad[0, 0]
-            focal_positions.append((lidar2cam @ np.array([0., 0., f, 1.]).reshape([4, 1])).flatten()[:3])
+            focal_positions.append(
+                (lidar2cam @ np.array([0.0, 0.0, f, 1.0]).reshape([4, 1])).flatten()[:3]
+            )
             imgs.append(datapoint.get_image().astype(np.float32))
 
             img_h, img_w = datapoint.depth_size
@@ -287,7 +328,9 @@ class ImagePoint_FLINK_vis(data.Dataset):
                     # Create mask array within bbox
                     mask_array = np.array(mask).reshape(h, w)
                     # Fill the bbox region with mask values
-                    labels[y:y+h, x:x+w][mask_array == 1] = self.name_label[segment.category_id]
+                    labels[y : y + h, x : x + w][mask_array == 1] = self.name_label[
+                        segment.category_id
+                    ]
             labels = labels.reshape(-1, 1)
 
             points = points[valid_points]
@@ -297,25 +340,31 @@ class ImagePoint_FLINK_vis(data.Dataset):
 
         combined_points: np.ndarray = np.concatenate(all_points, axis=0)
         combined_labels: np.ndarray = np.concatenate(all_labels, axis=0)
-            
+
         # Randomly sample points if we have more than that
         if len(combined_points) > 10000:
-            sample_indices = np.random.choice(len(combined_points), 10000, replace=False)
+            sample_indices = np.random.choice(
+                len(combined_points), 10000, replace=False
+            )
             combined_points = combined_points[sample_indices]
             combined_labels = combined_labels[sample_indices]
 
         img_metas: Dict[str, Any] = {
-            'lidar2img': lidar2imgs,
-            'cam_positions': cam_positions,
-            'focal_positions': focal_positions,
-            'raw_points': combined_points,
-            'raw_labels': combined_labels
+            "lidar2img": lidar2imgs,
+            "cam_positions": cam_positions,
+            "focal_positions": focal_positions,
+            "raw_points": combined_points,
+            "raw_labels": combined_labels,
         }  # Placeholder for consistency
 
-        data_tuple: Tuple[List[np.ndarray], Dict[str, List[np.ndarray]], np.ndarray, np.ndarray] = (imgs, img_metas, combined_points, combined_labels)
+        data_tuple: Tuple[
+            List[np.ndarray], Dict[str, List[np.ndarray]], np.ndarray, np.ndarray
+        ] = (imgs, img_metas, combined_points, combined_labels)
         return data_tuple, ["fake_filename"], "fake_scene_meta", None
 
-    def __getitem__(self, index: int) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
+    def __getitem__(
+        self, index: int
+    ) -> Tuple[List[np.ndarray], Dict[str, Any], np.ndarray, np.ndarray]:
         """
         Get a sample from the dataset.
 
@@ -329,7 +378,7 @@ class ImagePoint_FLINK_vis(data.Dataset):
                 - np.ndarray:  The point cloud labels (all ones).
         """
         return self.get_datapoint(self.dataset_loaders[index].datapoints)
-    
+
     # @staticmethod
     # def _rle_to_mask(rle: List[int], shape: Tuple[int, int]) -> np.ndarray:
     #     """Convert RLE to binary mask."""
@@ -365,33 +414,42 @@ class ImagePoint_FLINK_vis(data.Dataset):
 
     #     # Create meshgrid of pixel coordinates
     #     v, u = np.meshgrid(np.arange(width), np.arange(height))
-        
+
     #     # Convert depth to meters
     #     depth = (depth_image / 1000.0)
-        
+
     #     # Calculate x,y,z coordinates
     #     x = (v - cx) * depth / fx
     #     y = (u - cy) * depth / fy
     #     z = depth
-        
+
     #     # Stack coordinates
     #     points = np.stack([x, y, z], axis=-1)
-        
+
     #     # Reshape to (N,3)
     #     points = points.reshape(-1, 3)
-        
+
     #     # Filter out invalid points
     #     valid_points = depth.reshape(-1) > 1e-5
-        
+
     #     # Transform to world coordinates
     #     points = (world2cam[:3, :3] @ points.T).T + world2cam[:3, 3]
-        
+
     #     return points.astype(np.float32), valid_points
 
+
 class DatasetWrapper_NuScenes_vis(data.Dataset):
-    def __init__(self, in_dataset, grid_size, ignore_label=0, fixed_volume_space=False, 
-                 max_volume_space=[50, np.pi, 3], min_volume_space=[0, -np.pi, -5], phase='train'):
-        'Initialization'
+    def __init__(
+        self,
+        in_dataset,
+        grid_size,
+        ignore_label=0,
+        fixed_volume_space=False,
+        max_volume_space=[50, np.pi, 3],
+        min_volume_space=[0, -np.pi, -5],
+        phase="train",
+    ):
+        "Initialization"
         self.point_cloud_dataset = in_dataset
         self.grid_size = np.asarray(grid_size).astype(np.int32)
         self.ignore_label = ignore_label
@@ -400,16 +458,16 @@ class DatasetWrapper_NuScenes_vis(data.Dataset):
         self.min_volume_space = min_volume_space
         self.polar = False
 
-        if phase == 'train':
+        if phase == "train":
             transforms = [
                 PhotoMetricDistortionMultiViewImage(),
                 NormalizeMultiviewImage(**img_norm_cfg),
-                PadMultiViewImage(size_divisor=32)
+                PadMultiViewImage(size_divisor=32),
             ]
         else:
             transforms = [
                 NormalizeMultiviewImage(**img_norm_cfg),
-                PadMultiViewImage(size_divisor=32)
+                PadMultiViewImage(size_divisor=32),
             ]
         self.transforms = transforms
 
@@ -419,40 +477,45 @@ class DatasetWrapper_NuScenes_vis(data.Dataset):
     def __getitem__(self, index):
         data, filelist, scene_meta, timestamp = self.point_cloud_dataset[index]
         imgs, img_metas, xyz, labels = data
-        
+
         # deal with img augmentations
-        imgs_dict = {'img': imgs}
+        imgs_dict = {"img": imgs}
         for t in self.transforms:
             imgs_dict = t(imgs_dict)
-        imgs = imgs_dict['img']
+        imgs = imgs_dict["img"]
         imgs = [img.transpose(2, 0, 1) for img in imgs]
-        img_metas['img_shape'] = imgs_dict['img_shape']
+        img_metas["img_shape"] = imgs_dict["img_shape"]
 
         xyz_pol = xyz
-        
+
         assert self.fixed_volume_space
         max_bound = np.asarray(self.max_volume_space)  # 51.2 51.2 3
         min_bound = np.asarray(self.min_volume_space)  # -51.2 -51.2 -5
         # get grid index
         crop_range = max_bound - min_bound
-        cur_grid_size = self.grid_size                 # 200, 200, 16
+        cur_grid_size = self.grid_size  # 200, 200, 16
         intervals = crop_range / (cur_grid_size - 1)
 
-        if (intervals == 0).any(): print("Zero interval!")
+        if (intervals == 0).any():
+            print("Zero interval!")
         # TODO: grid_ind of float dtype may be better.
-        grid_ind = (np.floor((np.clip(xyz_pol, min_bound, max_bound) - min_bound) / intervals)).astype(np.int64)
+        grid_ind = (
+            np.floor((np.clip(xyz_pol, min_bound, max_bound) - min_bound) / intervals)
+        ).astype(np.int64)
 
         # process labels
         processed_label = np.ones(self.grid_size, dtype=np.uint8) * self.ignore_label
         label_voxel_pair = np.concatenate([grid_ind, labels], axis=1)
-        label_voxel_pair = label_voxel_pair[np.lexsort((grid_ind[:, 0], grid_ind[:, 1], grid_ind[:, 2])), :]
+        label_voxel_pair = label_voxel_pair[
+            np.lexsort((grid_ind[:, 0], grid_ind[:, 1], grid_ind[:, 2])), :
+        ]
         processed_label = nb_process_label(np.copy(processed_label), label_voxel_pair)
         data_tuple = (imgs, img_metas, processed_label, grid_ind, labels)
 
         return data_tuple, filelist, scene_meta, timestamp
 
 
-@nb.jit('u1[:,:,:](u1[:,:,:],i8[:,:])', nopython=True, cache=True, parallel=False)
+@nb.jit("u1[:,:,:](u1[:,:,:],i8[:,:])", nopython=True, cache=True, parallel=False)
 def nb_process_label(processed_label, sorted_label_voxel_pair):
     label_size = 256
     counter = np.zeros((label_size,), dtype=np.uint16)
@@ -461,9 +524,13 @@ def nb_process_label(processed_label, sorted_label_voxel_pair):
     for i in range(1, sorted_label_voxel_pair.shape[0]):
         cur_ind = sorted_label_voxel_pair[i, :3]
         if not np.all(np.equal(cur_ind, cur_sear_ind)):
-            processed_label[cur_sear_ind[0], cur_sear_ind[1], cur_sear_ind[2]] = np.argmax(counter)
+            processed_label[cur_sear_ind[0], cur_sear_ind[1], cur_sear_ind[2]] = (
+                np.argmax(counter)
+            )
             counter = np.zeros((label_size,), dtype=np.uint16)
             cur_sear_ind = cur_ind
         counter[sorted_label_voxel_pair[i, 3]] += 1
-    processed_label[cur_sear_ind[0], cur_sear_ind[1], cur_sear_ind[2]] = np.argmax(counter)
+    processed_label[cur_sear_ind[0], cur_sear_ind[1], cur_sear_ind[2]] = np.argmax(
+        counter
+    )
     return processed_label
