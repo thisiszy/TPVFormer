@@ -297,7 +297,7 @@ class ImagePoint_FLINK_vis(data.Dataset):
         all_points: List[np.ndarray] = []
         all_labels: List[np.ndarray] = []
 
-        for datapoint in selected_datapoints:
+        for datapoint in random.sample(selected_datapoints, self.img_num):
             # assume world center is the lidar
             cam2lidar: np.ndarray = datapoint.metadata.metadata.get_world2cam()
             lidar2cam: np.ndarray = np.linalg.inv(cam2lidar)

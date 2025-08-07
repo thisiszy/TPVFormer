@@ -328,7 +328,7 @@ def main():
         nusc = NuScenes(version="v1.0-trainval", dataroot=data_path, verbose=True)
         pt_dataset = ImagePoint_NuScenes_vis(data_path, imageset=pkl_path, nusc=nusc)
     elif dataset_config["dataset_type"] == "ImagePoint_FLINK":
-        pt_dataset = ImagePoint_FLINK_vis(data_path, label_name=label_name)
+        pt_dataset = ImagePoint_FLINK_vis(data_path, label_name=label_name, img_num=cfg.val_data_loader["img_num"])
     else:
         raise ValueError(f"Invalid dataset type: {dataset_config['dataset_type']}")
 
