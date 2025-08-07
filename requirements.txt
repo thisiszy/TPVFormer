@@ -1,4 +1,4 @@
-mmcv-full==1.7.2
+# mmcv-full==1.7.2
 mmdet==2.28.2
 mmsegmentation==0.30.0
 numba==0.58.1
@@ -16,3 +16,5 @@ torchvision==0.19.1
 alive-progress
 comet-ml
 plotly
+setuptools
+pydantic

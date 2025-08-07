@@ -1,6 +1,6 @@
 
 from .multi_scale_deformable_attn_function import MultiScaleDeformableAttnFunction_fp32
-from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
+# from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
 import warnings
 import torch
 import torch.nn as nn
@@ -8,10 +8,12 @@ from mmcv.cnn import xavier_init, constant_init
 from mmcv.cnn.bricks.registry import ATTENTION
 import math
 from mmcv.runner.base_module import BaseModule
+from .multi_scale_deformable_attn_function import ms_deform_attn_core_pytorch
 
-from mmcv.utils import ext_loader
-ext_module = ext_loader.load_ext(
-    '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
+
+# from mmcv.utils import ext_loader
+# ext_module = ext_loader.load_ext(
+#     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
 
 @ATTENTION.register_module()
@@ -224,7 +226,7 @@ class TPVCrossViewHybridAttention(BaseModule):
                 value, spatial_shapes, level_start_index, sampling_locations,
                 attention_weights, self.im2col_step)
         else:
-            output = multi_scale_deformable_attn_pytorch(
+            output = ms_deform_attn_core_pytorch(
                 value, spatial_shapes, sampling_locations, attention_weights)
         # output shape (bs*num_tpv_queue, num_query, embed_dims)
         # (bs*num_tpv_queue, num_query, embed_dims)-> (num_query, embed_dims, bs*num_tpv_queue)

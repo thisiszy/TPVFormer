@@ -40,7 +40,7 @@ class MultiScaleDeformableAttnFunction_fp16(Function):
             value_level_start_index,
             sampling_locations,
             attention_weights,
-            im2col_step=ctx.im2col_step)
+            ctx.im2col_step)
         ctx.save_for_backward(value, value_spatial_shapes,
                               value_level_start_index, sampling_locations,
                               attention_weights)
@@ -76,7 +76,7 @@ class MultiScaleDeformableAttnFunction_fp16(Function):
             grad_value,
             grad_sampling_loc,
             grad_attn_weight,
-            im2col_step=ctx.im2col_step)
+            ctx.im2col_step)
 
         return grad_value, None, None, \
             grad_sampling_loc, grad_attn_weight, None
@@ -116,7 +116,7 @@ class MultiScaleDeformableAttnFunction_fp32(Function):
             value_level_start_index,
             sampling_locations,
             attention_weights,
-            im2col_step=ctx.im2col_step)
+            ctx.im2col_step)
         ctx.save_for_backward(value, value_spatial_shapes,
                               value_level_start_index, sampling_locations,
                               attention_weights)
@@ -152,7 +152,7 @@ class MultiScaleDeformableAttnFunction_fp32(Function):
             grad_value,
             grad_sampling_loc,
             grad_attn_weight,
-            im2col_step=ctx.im2col_step)
+            ctx.im2col_step)
 
         return grad_value, None, None, \
             grad_sampling_loc, grad_attn_weight, None

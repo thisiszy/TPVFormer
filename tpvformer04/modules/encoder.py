@@ -3,10 +3,11 @@ from mmcv.cnn.bricks.transformer import TransformerLayerSequence
 from mmcv.runner import force_fp32, auto_fp16
 import numpy as np
 import torch
-from mmcv.utils import TORCH_VERSION, digit_version
-from mmcv.utils import ext_loader
-ext_module = ext_loader.load_ext(
-    '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
+from mmcv.utils.parrots_wrapper import TORCH_VERSION
+from mmcv.utils.version_utils import digit_version
+# from mmcv.utils import ext_loader
+# ext_module = ext_loader.load_ext(
+#     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
@@ -111,7 +112,10 @@ class TPVFormerEncoder(TransformerLayerSequence):
             (reference_points, torch.ones_like(reference_points[..., :1])), -1)
 
         reference_points = reference_points.permute(1, 0, 2, 3)
-        D, B, num_query = reference_points.size()[:3]
+        B = lidar2img.size(0)
+        # stack reference_points at the second dimension
+        reference_points = reference_points.repeat(1, B, 1, 1)
+        D, _, num_query = reference_points.size()[:3]
         num_cam = lidar2img.size(1)
 
         reference_points = reference_points.view(
@@ -124,13 +128,16 @@ class TPVFormerEncoder(TransformerLayerSequence):
                                             reference_points.to(torch.float32)).squeeze(-1)
         eps = 1e-5
 
-        tpv_mask = (reference_points_cam[..., 2:3] > eps)
+        tpv_mask = (reference_points_cam[..., 2:3] > eps)   # remove the points behind the camera
+        # normalize the points to the image plane
         reference_points_cam = reference_points_cam[..., 0:2] / torch.maximum(
             reference_points_cam[..., 2:3], torch.ones_like(reference_points_cam[..., 2:3]) * eps)
 
+        # get pixel coordinates
         reference_points_cam[..., 0] /= img_metas[0]['img_shape'][0][1]
         reference_points_cam[..., 1] /= img_metas[0]['img_shape'][0][0]
 
+        # filter out the points outside the image
         tpv_mask = (tpv_mask & (reference_points_cam[..., 1:2] > 0.0)
                     & (reference_points_cam[..., 1:2] < 1.0)
                     & (reference_points_cam[..., 0:1] < 1.0)
@@ -141,6 +148,7 @@ class TPVFormerEncoder(TransformerLayerSequence):
             tpv_mask = tpv_mask.new_tensor(
                 np.nan_to_num(tpv_mask.cpu().numpy()))
 
+        # permute the points to the correct shape
         reference_points_cam = reference_points_cam.permute(2, 1, 3, 0, 4)
         tpv_mask = tpv_mask.permute(2, 1, 3, 0, 4).squeeze(-1)
 

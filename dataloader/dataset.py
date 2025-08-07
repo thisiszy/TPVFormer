@@ -8,8 +8,10 @@ from mmcv.image.io import imread
 from torch.utils import data
 import numpy as np
 import matplotlib.pyplot as plt
+import random
 
 from flink_dataset import FlinkDatapoint, FlinkDatasetLoader
+
 
 class ImagePoint_NuScenes(data.Dataset):
     def __init__(
@@ -241,7 +243,9 @@ class ImagePoint_FLINK(data.Dataset):
                 _cache = pickle.load(f)
                 self.dataset_loaders = _cache["dataset_loaders"]
         if not self.dataset_loaders:
-            self.dataset_loaders = FlinkDatasetLoader.from_path([self.data_path])
+            self.dataset_loaders = FlinkDatasetLoader.from_paths_legacy(
+                [self.data_path]
+            )
             if cache:
                 with open(cache_path, "wb") as f:
                     pickle.dump(
@@ -283,7 +287,7 @@ class ImagePoint_FLINK(data.Dataset):
         all_points: List[np.ndarray] = []
         all_labels: List[np.ndarray] = []
 
-        for datapoint in selected_datapoints:
+        for datapoint in random.sample(selected_datapoints, self.img_num):
             # assume world center is the lidar
             cam2lidar: np.ndarray = datapoint.metadata.metadata.get_world2cam()
             lidar2cam: np.ndarray = np.linalg.inv(cam2lidar)
@@ -307,9 +311,9 @@ class ImagePoint_FLINK(data.Dataset):
                     # Create mask array within bbox
                     mask_array = np.array(mask).reshape(h, w)
                     # Fill the bbox region with mask values
-                    labels[y : y + h, x : x + w][mask_array == 1] = (
-                        self.name_label[segment.category_id]
-                    )
+                    labels[y : y + h, x : x + w][mask_array == 1] = self.name_label[
+                        segment.category_id
+                    ]
             labels = labels.reshape(-1, 1)
 
             points = points[valid_points]

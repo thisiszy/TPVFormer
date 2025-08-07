@@ -270,7 +270,7 @@ class ImagePoint_FLINK_vis(data.Dataset):
                 _cache = pickle.load(f)
                 self.dataset_loaders = _cache["dataset_loaders"]
         if not self.dataset_loaders:
-            self.dataset_loaders = FlinkDatasetLoader.from_path([self.data_path])
+            self.dataset_loaders = FlinkDatasetLoader.from_paths_legacy([self.data_path])
             if cache:
                 with open(cache_path, "wb") as f:
                     pickle.dump(

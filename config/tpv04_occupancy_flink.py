@@ -3,6 +3,10 @@ _base_ = [
     './_base_/schedule.py',
 ]
 
+
+bs = 2
+_num_cams_ = 3
+
 dataset_params = dict(
     dataset_type = "ImagePoint_FLINK",
     version = "v1.0-trainval",
@@ -16,17 +20,21 @@ dataset_params = dict(
 )
 
 train_data_loader = dict(
-    data_path = "/home/zq5080/zhiyuan/blenderprocdata/fixed_camera_difficult",
-    batch_size = 1,
+    # data_path = "/home/zq5080/zhiyuan/blenderprocdata/fixed_camera_difficult",
+    data_path = "/home/zq5080/zhiyuan/blenderprocdata/parcel3d",
+    batch_size = bs,
     shuffle = True,
     num_workers = 10,
+    img_num = _num_cams_,
 )
 
 val_data_loader = dict(
-    data_path = "/home/zq5080/zhiyuan/blenderprocdata/fixed_camera_difficult",
-    batch_size = 1,
+    # data_path = "/home/zq5080/zhiyuan/blenderprocdata/fixed_camera_difficult",
+    data_path = "/home/zq5080/zhiyuan/blenderprocdata/parcel3d",
+    batch_size = bs,
     shuffle = False,
     num_workers = 10,
+    img_num = _num_cams_,
 )
 
 unique_label = [1, 2]
@@ -42,7 +50,6 @@ _dim_ = 256
 _pos_dim_ = _dim_//2
 _ffn_dim_ = _dim_*2
 _num_levels_ = 4
-_num_cams_ = 3
 tpv_h_ = 50
 tpv_w_ = 50
 tpv_z_ = 50

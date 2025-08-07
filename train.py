@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict
 import os, time, argparse, os.path as osp, numpy as np
 import torch
 import torch.distributed as dist
@@ -211,7 +211,7 @@ def main(local_rank, args):
             train_pt_labs,
         ) in enumerate(train_dataset_loader):
             # plot_point_cloud(train_grid, train_pt_labs)
-            # breakpoint()
+            # print(imgs.shape, train_vox_label.shape, train_grid.shape, train_pt_labs.shape)
 
             imgs = imgs.cuda()
             train_grid = train_grid.to(torch.float32).cuda()
@@ -264,10 +264,10 @@ def main(local_rank, args):
                 }
             )  # update mean losses
             scheduler.step_update(global_iter)
-            time_e = time.time()
 
             global_iter += 1
             if i_iter % print_freq == 0 and dist.get_rank() == 0:
+                time_e = time.time()
                 lr = optimizer.param_groups[0]["lr"]
                 logger.info(
                     "[TRAIN] Epoch %d Iter %5d/%d: Loss: %.3f (%.3f), grad_norm: %.1f, lr: %.7f, time: %.3f (%.3f)"
@@ -294,8 +294,8 @@ def main(local_rank, args):
                     experiment.log_metric(
                         "train/total_loss", loss_dict["loss"], step=global_iter
                     )
+                time_s = time.time()
             data_time_s = time.time()
-            time_s = time.time()
 
         # save checkpoint
         if dist.get_rank() == 0:
